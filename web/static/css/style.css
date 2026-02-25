@@ -1,0 +1,40 @@
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background-color: #f8f9fa;
+}
+
+.navbar {
+    box-shadow: 0 2px 4px rgba(0,0,0,.1);
+}
+
+.card {
+    box-shadow: 0 2px 8px rgba(0,0,0,.1);
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.card-header {
+    border-radius: 8px 8px 0 0 !important;
+}
+
+pre {
+    border-radius: 4px;
+    overflow-x: auto;
+}
+
+code {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+    font-size: 0.9em;
+}
+
+.table th {
+    background-color: #f8f9fa;
+}
+
+footer {
+    margin-top: 40px;
+    padding: 20px 0;
+    background-color: #212529;
+    color: #fff;
+    text-align: center;
+}

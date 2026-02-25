@@ -1,0 +1,45 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+database:
+  host: "postgres"
+  port: 5432
+  user: "postgres"
+  password: "secret"
+  name: "oauth2"
+  sslmode: "disable"
+
+jwt:
+  issuer: "http://localhost:8080"
+  access_token_ttl: "15m"
+  refresh_token_ttl: "24h"
+  refresh_token_rotation: true
+  code_ttl: "5m"
+
+oauth:
+  providers:
+    - name: "google"
+      client_id: ""
+      client_secret: ""
+      scopes:
+        - "openid"
+        - "profile"
+        - "email"
+      auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
+      token_url: "https://oauth2.googleapis.com/token"
+      user_info_url: "https://www.googleapis.com/oauth2/v3/userinfo"
+    - name: "github"
+      client_id: ""
+      client_secret: ""
+      scopes:
+        - "read:user"
+        - "user:email"
+      auth_url: "https://github.com/login/oauth/authorize"
+      token_url: "https://github.com/login/oauth/access_token"
+      user_info_url: "https://api.github.com/user"
+
+admin:
+  enabled: true
+  username: "admin"
+  password: "changeme"

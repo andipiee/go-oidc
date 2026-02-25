@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: oauth2-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: oauth2
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: oauth2-server
+    ports:
+      - "8080:8080"
+    environment:
+      - CONFIG_PATH=/app/configs/config.yaml
+    volumes:
+      - ./configs:/app/configs
+      - ./web:/app/web
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  adminer:
+    image: adminer:latest
+    container_name: oauth2-adminer
+    ports:
+      - "8081:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
