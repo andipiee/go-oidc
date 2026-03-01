@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
@@ -16,13 +17,12 @@ import (
 	"github.com/andipiee/go-oidc/internal/infrastructure/oauth"
 	"github.com/andipiee/go-oidc/internal/infrastructure/repository"
 	"github.com/andipiee/go-oidc/internal/presentation/handler"
+	"github.com/andipiee/go-oidc/internal/presentation/httputil"
 	"github.com/andipiee/go-oidc/internal/presentation/middleware"
-
-	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	cfg, err := LoadConfig("configs/config.yaml")
+	cfg, err := LoadConfig(configPath())
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
@@ -32,6 +32,8 @@ func main() {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer db.Close()
+
+	tmpl := template.Must(template.ParseGlob("web/static/*.html"))
 
 	userRepo := repository.NewUserRepository(db)
 	clientRepo := repository.NewClientRepository(db)
@@ -56,6 +58,8 @@ func main() {
 	providerService := oauth.NewProviderService(providerConfigs)
 	_ = providerService
 
+	userUseCase := usecase.NewUserUseCase(userRepo, sessionRepo)
+
 	authorizeUseCase := usecase.NewAuthorizeUseCase(clientRepo, userRepo, tokenRepo, jwtService, cryptoService, cfg.JWT.CodeTTLDur)
 
 	tokenUseCaseCfg := usecase.JWTConfig{
@@ -66,68 +70,80 @@ func main() {
 		CodeTTLDur:           cfg.JWT.CodeTTLDur,
 	}
 	tokenUseCase := usecase.NewTokenUseCase(clientRepo, userRepo, tokenRepo, jwtService, cryptoService, tokenUseCaseCfg)
-	userUseCase := usecase.NewUserUseCase(userRepo, sessionRepo)
 	deviceUseCase := usecase.NewDeviceUseCase(clientRepo, userRepo, tokenRepo, jwtService, cfg.JWT.CodeTTLDur)
 
-	authorizeHandler := handler.NewAuthorizeHandler(authorizeUseCase)
+	authorizeHandler := handler.NewAuthorizeHandler(authorizeUseCase, userUseCase)
 	tokenHandler := handler.NewTokenHandler(tokenUseCase)
 	userinfoHandler := handler.NewUserInfoHandler(userUseCase, jwtService)
-	deviceHandler := handler.NewDeviceHandler(deviceUseCase)
+	deviceHandler := handler.NewDeviceHandler(deviceUseCase, tmpl)
 	adminHandler := handler.NewAdminHandler(userRepo, clientRepo, handler.AdminConfig(cfg.Admin))
-	discoveryHandler := handler.NewDiscoveryHandler(cfg.JWT.Issuer, cfg.Server.Port)
+	discoveryHandler := handler.NewDiscoveryHandler(cfg.JWT.Issuer, cfg.Server.Port, jwtService)
+	authHandler := handler.NewAuthHandler(userRepo, cryptoService, jwtService, userUseCase, tmpl)
+	registrationHandler := handler.NewClientRegistrationHandler(clientRepo, cryptoService)
 
-	router := gin.Default()
-	router.Use(middleware.Logger())
-	router.Use(middleware.CORS())
+	mux := http.NewServeMux()
 
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	// Health
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	router.GET("/.well-known/openid-configuration", discoveryHandler.HandleDiscovery)
-	router.GET("/.well-known/jwks.json", discoveryHandler.HandleJWKS)
+	// Discovery
+	mux.HandleFunc("GET /.well-known/openid-configuration", discoveryHandler.HandleDiscovery)
+	mux.HandleFunc("GET /.well-known/jwks.json", discoveryHandler.HandleJWKS)
 
-	oauth2Group := router.Group("/oauth2")
-	{
-		oauth2Group.GET("/authorize", authorizeHandler.HandleAuthorize)
-		oauth2Group.POST("/authorize", authorizeHandler.HandleAuthorizePost)
-		oauth2Group.POST("/token", tokenHandler.HandleToken)
-		oauth2Group.POST("/revoke", tokenHandler.HandleRevoke)
-		oauth2Group.POST("/introspect", tokenHandler.HandleIntrospect)
-	}
+	// OAuth2
+	mux.HandleFunc("GET /oauth2/authorize", authorizeHandler.HandleAuthorize)
+	mux.HandleFunc("POST /oauth2/authorize", authorizeHandler.HandleAuthorizePost)
+	mux.HandleFunc("POST /oauth2/token", tokenHandler.HandleToken)
+	mux.HandleFunc("POST /oauth2/revoke", tokenHandler.HandleRevoke)
+	mux.HandleFunc("POST /oauth2/introspect", tokenHandler.HandleIntrospect)
 
-	oidcGroup := router.Group("/oidc")
-	{
-		oidcGroup.GET("/userinfo", userinfoHandler.HandleUserInfo)
-		oidcGroup.POST("/device/authorize", deviceHandler.HandleDeviceAuthorize)
-		oidcGroup.GET("/device", deviceHandler.HandleDevice)
-		oidcGroup.POST("/register", handler.NewClientRegistrationHandler(clientRepo, cryptoService).HandleRegistration)
-	}
+	// OIDC
+	mux.HandleFunc("GET /oidc/userinfo", userinfoHandler.HandleUserInfo)
+	mux.HandleFunc("POST /oidc/device/authorize", deviceHandler.HandleDeviceAuthorize)
+	mux.HandleFunc("GET /oidc/device", deviceHandler.HandleDevice)
+	mux.HandleFunc("POST /oidc/register", registrationHandler.HandleRegistration)
 
+	// Admin (with BasicAuth)
 	if cfg.Admin.Enabled {
-		adminGroup := router.Group("/admin")
-		adminGroup.Use(middleware.BasicAuth(cfg.Admin.Username, cfg.Admin.Password))
-		{
-			adminGroup.GET("/", adminHandler.HandleIndex)
-			adminGroup.GET("/users", adminHandler.HandleListUsers)
-			adminGroup.POST("/users", adminHandler.HandleCreateUser)
-			adminGroup.DELETE("/users/:id", adminHandler.HandleDeleteUser)
-			adminGroup.GET("/clients", adminHandler.HandleListClients)
-			adminGroup.POST("/clients", adminHandler.HandleCreateClient)
-			adminGroup.DELETE("/clients/:id", adminHandler.HandleDeleteClient)
-		}
+		adminAuth := middleware.BasicAuth(cfg.Admin.Username, cfg.Admin.Password)
+		mux.Handle("GET /admin/", adminAuth(http.HandlerFunc(adminHandler.HandleIndex)))
+		mux.Handle("GET /admin/users", adminAuth(http.HandlerFunc(adminHandler.HandleListUsers)))
+		mux.Handle("POST /admin/users", adminAuth(http.HandlerFunc(adminHandler.HandleCreateUser)))
+		mux.Handle("DELETE /admin/users/{id}", adminAuth(http.HandlerFunc(adminHandler.HandleDeleteUser)))
+		mux.Handle("GET /admin/clients", adminAuth(http.HandlerFunc(adminHandler.HandleListClients)))
+		mux.Handle("POST /admin/clients", adminAuth(http.HandlerFunc(adminHandler.HandleCreateClient)))
+		mux.Handle("DELETE /admin/clients/{id}", adminAuth(http.HandlerFunc(adminHandler.HandleDeleteClient)))
 	}
 
-	staticHandler := http.FileServer(http.Dir("web/static"))
-	router.GET("/static/*any", gin.WrapH(staticHandler))
-	router.GET("/", func(c *gin.Context) {
-		c.File("web/static/index.html")
+	// Auth
+	mux.HandleFunc("GET /auth/login", authHandler.ShowLoginPage)
+	mux.HandleFunc("POST /auth/login", authHandler.HandleLoginForm)
+	mux.HandleFunc("POST /auth/login/json", authHandler.HandleLogin)
+	mux.HandleFunc("GET /auth/register", authHandler.ShowRegisterPage)
+	mux.HandleFunc("POST /auth/register", authHandler.HandleRegisterForm)
+	mux.HandleFunc("POST /auth/register/json", authHandler.HandleRegister)
+	mux.HandleFunc("POST /auth/logout", authHandler.HandleLogout)
+
+	// Static files
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
+
+	// Root
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "web/static/index.html")
 	})
+
+	// Global middleware chain (outermost runs first)
+	var h http.Handler = mux
+	h = middleware.CORS(h)
+	h = middleware.Recovery(h)
+	h = middleware.Logger(h)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: router,
+		Handler: h,
 	}
 
 	go func() {

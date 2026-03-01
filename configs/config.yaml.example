@@ -3,10 +3,10 @@ server:
   port: 8080
 
 database:
-  host: "postgres"
+  host: "localhost"
   port: 5432
   user: "postgres"
-  password: "secret"
+  password: "changeme"
   name: "oauth2"
   sslmode: "disable"
 

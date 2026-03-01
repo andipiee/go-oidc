@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/andipiee/go-oidc/internal/application/usecase"
-	"github.com/gin-gonic/gin"
+	"github.com/andipiee/go-oidc/internal/presentation/httputil"
 )
 
 type TokenHandler struct {
@@ -15,11 +15,27 @@ func NewTokenHandler(tokenUseCase *usecase.TokenUseCase) *TokenHandler {
 	return &TokenHandler{tokenUseCase: tokenUseCase}
 }
 
-func (h *TokenHandler) HandleToken(c *gin.Context) {
-	var req usecase.TokenRequest
-	if err := c.ShouldBind(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "error_description": err.Error()})
+func (h *TokenHandler) HandleToken(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		httputil.Error(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
+	}
+
+	req := usecase.TokenRequest{
+		GrantType:    r.FormValue("grant_type"),
+		Code:         r.FormValue("code"),
+		RedirectURI:  r.FormValue("redirect_uri"),
+		ClientID:     r.FormValue("client_id"),
+		ClientSecret: r.FormValue("client_secret"),
+		CodeVerifier: r.FormValue("code_verifier"),
+		RefreshToken: r.FormValue("refresh_token"),
+		Scope:        r.FormValue("scope"),
+	}
+
+	// Client credentials from Basic auth take precedence
+	if u, p, ok := r.BasicAuth(); ok {
+		req.ClientID = u
+		req.ClientSecret = p
 	}
 
 	var resp *usecase.TokenResponse
@@ -27,50 +43,51 @@ func (h *TokenHandler) HandleToken(c *gin.Context) {
 
 	switch req.GrantType {
 	case "authorization_code":
-		resp, err = h.tokenUseCase.ExchangeCode(c.Request.Context(), req)
+		resp, err = h.tokenUseCase.ExchangeCode(r.Context(), req)
 	case "refresh_token":
-		resp, err = h.tokenUseCase.RefreshToken(c.Request.Context(), req)
+		resp, err = h.tokenUseCase.RefreshToken(r.Context(), req)
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported_grant_type"})
+		httputil.Error(w, http.StatusBadRequest, "unsupported_grant_type", "")
 		return
 	}
 
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant", "error_description": err.Error()})
+		httputil.Error(w, http.StatusBadRequest, "invalid_grant", err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, resp)
+	httputil.JSON(w, http.StatusOK, resp)
 }
 
-func (h *TokenHandler) HandleRevoke(c *gin.Context) {
-	token := c.PostForm("token")
-	tokenTypeHint := c.PostForm("token_type_hint")
+func (h *TokenHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	token := r.FormValue("token")
+	tokenTypeHint := r.FormValue("token_type_hint")
 
-	if err := h.tokenUseCase.RevokeToken(c.Request.Context(), token, tokenTypeHint); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+	if err := h.tokenUseCase.RevokeToken(r.Context(), token, tokenTypeHint); err != nil {
+		httputil.Error(w, http.StatusBadRequest, "invalid_request", "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{})
+	httputil.JSON(w, http.StatusOK, map[string]any{})
 }
 
-func (h *TokenHandler) HandleIntrospect(c *gin.Context) {
-	token := c.PostForm("token")
-	_ = c.PostForm("token_type_hint")
+func (h *TokenHandler) HandleIntrospect(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	token := r.FormValue("token")
 
 	if token == "" {
-		c.JSON(http.StatusOK, gin.H{"active": false})
+		httputil.JSON(w, http.StatusOK, map[string]any{"active": false})
 		return
 	}
 
-	accessToken, err := h.tokenUseCase.IntrospectToken(c.Request.Context(), token)
+	accessToken, err := h.tokenUseCase.IntrospectToken(r.Context(), token)
 	if err != nil || accessToken == nil {
-		c.JSON(http.StatusOK, gin.H{"active": false})
+		httputil.JSON(w, http.StatusOK, map[string]any{"active": false})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	httputil.JSON(w, http.StatusOK, map[string]any{
 		"active":    true,
 		"client_id": accessToken.ClientID,
 		"scope":     accessToken.Scope,

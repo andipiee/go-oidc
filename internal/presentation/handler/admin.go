@@ -1,28 +1,28 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/andipiee/go-oidc/internal/domain/entity"
 	"github.com/andipiee/go-oidc/internal/domain/repository"
 	"github.com/andipiee/go-oidc/internal/infrastructure/auth"
-	"github.com/gin-gonic/gin"
+	"github.com/andipiee/go-oidc/internal/presentation/httputil"
 	"github.com/google/uuid"
 )
 
 type DiscoveryHandler struct {
-	issuer string
-	port   int
+	issuer     string
+	port       int
+	jwtService *auth.JWTService
 }
 
-func NewDiscoveryHandler(issuer string, port int) *DiscoveryHandler {
-	return &DiscoveryHandler{issuer: issuer, port: port}
+func NewDiscoveryHandler(issuer string, port int, jwtService *auth.JWTService) *DiscoveryHandler {
+	return &DiscoveryHandler{issuer: issuer, port: port, jwtService: jwtService}
 }
 
-func (h *DiscoveryHandler) HandleDiscovery(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
+func (h *DiscoveryHandler) HandleDiscovery(w http.ResponseWriter, r *http.Request) {
+	httputil.JSON(w, http.StatusOK, map[string]any{
 		"issuer":                                h.issuer,
 		"authorization_endpoint":                h.issuer + "/oauth2/authorize",
 		"token_endpoint":                        h.issuer + "/oauth2/token",
@@ -39,21 +39,16 @@ func (h *DiscoveryHandler) HandleDiscovery(c *gin.Context) {
 		"token_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post", "none"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
-		"code_challenge_methods_supported":      []string{"S256", "plain"},
+		"code_challenge_methods_supported":      []string{"S256"},
+		"claims_supported":                      []string{"sub", "name", "email", "email_verified", "picture"},
+		"claims_parameter_supported":            false,
+		"request_parameter_supported":           false,
+		"request_uri_parameter_supported":       false,
 	})
 }
 
-func (h *DiscoveryHandler) HandleJWKS(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"keys": []gin.H{
-			{
-				"kty": "RSA",
-				"use": "sig",
-				"kid": "1",
-				"alg": "RS256",
-			},
-		},
-	})
+func (h *DiscoveryHandler) HandleJWKS(w http.ResponseWriter, r *http.Request) {
+	httputil.JSON(w, http.StatusOK, h.jwtService.GetJWKS())
 }
 
 type AdminHandler struct {
@@ -76,27 +71,27 @@ func NewAdminHandler(userRepo repository.UserRepository, clientRepo repository.C
 	}
 }
 
-func (h *AdminHandler) HandleIndex(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "Admin API", "endpoints": []string{"/admin/users", "/admin/clients"}})
+func (h *AdminHandler) HandleIndex(w http.ResponseWriter, r *http.Request) {
+	httputil.JSON(w, http.StatusOK, map[string]any{"message": "Admin API", "endpoints": []string{"/admin/users", "/admin/clients"}})
 }
 
-func (h *AdminHandler) HandleListUsers(c *gin.Context) {
-	users, err := h.userRepo.List(c.Request.Context(), 100, 0)
+func (h *AdminHandler) HandleListUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := h.userRepo.List(r.Context(), 100, 0)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httputil.Error(w, http.StatusInternalServerError, err.Error(), "")
 		return
 	}
-	c.JSON(http.StatusOK, users)
+	httputil.JSON(w, http.StatusOK, users)
 }
 
-func (h *AdminHandler) HandleCreateUser(c *gin.Context) {
+func (h *AdminHandler) HandleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email    string `json:"email"`
 		Name     string `json:"name"`
 		Password string `json:"password"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.Error(w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
 
@@ -104,7 +99,7 @@ func (h *AdminHandler) HandleCreateUser(c *gin.Context) {
 	hash, _ := crypto.HashPassword(req.Password)
 
 	user := &entity.User{
-		ID:            uuid.New(),
+		ID:            uuid.Must(uuid.NewV7()),
 		Email:         req.Email,
 		PasswordHash:  hash,
 		Name:          req.Name,
@@ -113,47 +108,47 @@ func (h *AdminHandler) HandleCreateUser(c *gin.Context) {
 		UpdatedAt:     time.Now(),
 	}
 
-	if err := h.userRepo.Create(c.Request.Context(), user); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.userRepo.Create(r.Context(), user); err != nil {
+		httputil.Error(w, http.StatusInternalServerError, err.Error(), "")
 		return
 	}
 
-	c.JSON(http.StatusCreated, user)
+	httputil.JSON(w, http.StatusCreated, user)
 }
 
-func (h *AdminHandler) HandleDeleteUser(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
+func (h *AdminHandler) HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		httputil.Error(w, http.StatusBadRequest, "invalid id", "")
 		return
 	}
 
-	if err := h.userRepo.Delete(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.userRepo.Delete(r.Context(), id); err != nil {
+		httputil.Error(w, http.StatusInternalServerError, err.Error(), "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{})
+	httputil.JSON(w, http.StatusOK, map[string]any{})
 }
 
-func (h *AdminHandler) HandleListClients(c *gin.Context) {
-	clients, err := h.clientRepo.List(c.Request.Context(), 100, 0)
+func (h *AdminHandler) HandleListClients(w http.ResponseWriter, r *http.Request) {
+	clients, err := h.clientRepo.List(r.Context(), 100, 0)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httputil.Error(w, http.StatusInternalServerError, err.Error(), "")
 		return
 	}
-	c.JSON(http.StatusOK, clients)
+	httputil.JSON(w, http.StatusOK, clients)
 }
 
-func (h *AdminHandler) HandleCreateClient(c *gin.Context) {
+func (h *AdminHandler) HandleCreateClient(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name                    string   `json:"name"`
 		RedirectURIs            []string `json:"redirect_uris"`
 		GrantTypes              []string `json:"grant_types"`
 		TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.Error(w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
 
@@ -162,7 +157,7 @@ func (h *AdminHandler) HandleCreateClient(c *gin.Context) {
 	clientSecretHash, _ := crypto.HashPassword(clientSecret)
 
 	client := &entity.Client{
-		ID:                      uuid.New(),
+		ID:                      uuid.Must(uuid.NewV7()),
 		ClientID:                crypto.GenerateRandomString(16),
 		ClientSecretHash:        clientSecretHash,
 		Name:                    req.Name,
@@ -173,12 +168,12 @@ func (h *AdminHandler) HandleCreateClient(c *gin.Context) {
 		UpdatedAt:               time.Now(),
 	}
 
-	if err := h.clientRepo.Create(c.Request.Context(), client); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.clientRepo.Create(r.Context(), client); err != nil {
+		httputil.Error(w, http.StatusInternalServerError, err.Error(), "")
 		return
 	}
 
-	resp := map[string]interface{}{
+	httputil.JSON(w, http.StatusCreated, map[string]any{
 		"id":                         client.ID,
 		"client_id":                  client.ClientID,
 		"client_secret":              clientSecret,
@@ -186,24 +181,22 @@ func (h *AdminHandler) HandleCreateClient(c *gin.Context) {
 		"redirect_uris":              client.RedirectURIs,
 		"grant_types":                client.GrantTypes,
 		"token_endpoint_auth_method": client.TokenEndpointAuthMethod,
-	}
-
-	c.JSON(http.StatusCreated, resp)
+	})
 }
 
-func (h *AdminHandler) HandleDeleteClient(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
+func (h *AdminHandler) HandleDeleteClient(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		httputil.Error(w, http.StatusBadRequest, "invalid id", "")
 		return
 	}
 
-	if err := h.clientRepo.Delete(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.clientRepo.Delete(r.Context(), id); err != nil {
+		httputil.Error(w, http.StatusInternalServerError, err.Error(), "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{})
+	httputil.JSON(w, http.StatusOK, map[string]any{})
 }
 
 type ClientRegistrationHandler struct {
@@ -218,7 +211,7 @@ func NewClientRegistrationHandler(clientRepo repository.ClientRepository, crypto
 	}
 }
 
-func (h *ClientRegistrationHandler) HandleRegistration(c *gin.Context) {
+func (h *ClientRegistrationHandler) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RedirectURIs            []string `json:"redirect_uris"`
 		GrantTypes              []string `json:"grant_types"`
@@ -226,8 +219,8 @@ func (h *ClientRegistrationHandler) HandleRegistration(c *gin.Context) {
 		ApplicationType         string   `json:"application_type"`
 	}
 
-	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.Error(w, http.StatusBadRequest, "invalid_request", "")
 		return
 	}
 
@@ -235,7 +228,7 @@ func (h *ClientRegistrationHandler) HandleRegistration(c *gin.Context) {
 	clientSecretHash, _ := h.cryptoService.HashPassword(clientSecret)
 
 	client := &entity.Client{
-		ID:                      uuid.New(),
+		ID:                      uuid.Must(uuid.NewV7()),
 		ClientID:                h.cryptoService.GenerateRandomString(16),
 		ClientSecretHash:        clientSecretHash,
 		Name:                    "Dynamic Client",
@@ -246,12 +239,12 @@ func (h *ClientRegistrationHandler) HandleRegistration(c *gin.Context) {
 		UpdatedAt:               time.Now(),
 	}
 
-	if err := h.clientRepo.Create(c.Request.Context(), client); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.clientRepo.Create(r.Context(), client); err != nil {
+		httputil.Error(w, http.StatusInternalServerError, err.Error(), "")
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
+	httputil.JSON(w, http.StatusCreated, map[string]any{
 		"client_id":                  client.ClientID,
 		"client_secret":              clientSecret,
 		"client_id_issued_at":        client.CreatedAt.Unix(),

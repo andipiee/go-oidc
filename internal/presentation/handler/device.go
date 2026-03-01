@@ -1,36 +1,42 @@
 package handler
 
 import (
+	"html/template"
 	"net/http"
 
 	"github.com/andipiee/go-oidc/internal/application/usecase"
-	"github.com/gin-gonic/gin"
+	"github.com/andipiee/go-oidc/internal/presentation/httputil"
 )
 
 type DeviceHandler struct {
 	deviceUseCase *usecase.DeviceUseCase
+	tmpl          *template.Template
 }
 
-func NewDeviceHandler(deviceUseCase *usecase.DeviceUseCase) *DeviceHandler {
-	return &DeviceHandler{deviceUseCase: deviceUseCase}
+func NewDeviceHandler(deviceUseCase *usecase.DeviceUseCase, tmpl *template.Template) *DeviceHandler {
+	return &DeviceHandler{deviceUseCase: deviceUseCase, tmpl: tmpl}
 }
 
-func (h *DeviceHandler) HandleDeviceAuthorize(c *gin.Context) {
-	clientID := c.PostForm("client_id")
-	scope := c.DefaultPostForm("scope", "openid")
+func (h *DeviceHandler) HandleDeviceAuthorize(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	clientID := r.FormValue("client_id")
+	scope := r.FormValue("scope")
+	if scope == "" {
+		scope = "openid"
+	}
 
 	if clientID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		httputil.Error(w, http.StatusBadRequest, "invalid_request", "")
 		return
 	}
 
-	deviceCode, err := h.deviceUseCase.CreateDeviceCode(c.Request.Context(), clientID, scope)
+	deviceCode, err := h.deviceUseCase.CreateDeviceCode(r.Context(), clientID, scope)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_client"})
+		httputil.Error(w, http.StatusBadRequest, "invalid_client", "")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	httputil.JSON(w, http.StatusOK, map[string]any{
 		"device_code":               deviceCode.DeviceCode,
 		"user_code":                 deviceCode.UserCode,
 		"verification_uri":          "/oidc/device",
@@ -40,12 +46,12 @@ func (h *DeviceHandler) HandleDeviceAuthorize(c *gin.Context) {
 	})
 }
 
-func (h *DeviceHandler) HandleDevice(c *gin.Context) {
-	userCode := c.Query("user_code")
+func (h *DeviceHandler) HandleDevice(w http.ResponseWriter, r *http.Request) {
+	userCode := r.URL.Query().Get("user_code")
 	if userCode == "" {
-		c.HTML(http.StatusOK, "device", gin.H{})
+		httputil.HTML(w, h.tmpl, "device", http.StatusOK, map[string]any{})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"user_code": userCode})
+	httputil.JSON(w, http.StatusOK, map[string]any{"user_code": userCode})
 }
