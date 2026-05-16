@@ -4,9 +4,12 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"time"
 
@@ -45,8 +48,31 @@ type JWK struct {
 	E   string `json:"e"`
 }
 
-func NewJWTService(issuer string, accessTokenTTL, refreshTokenTTL int64) *JWTService {
-	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+func NewJWTService(issuer string, accessTokenTTL, refreshTokenTTL int64, privateKeyPEM string) *JWTService {
+	var privateKey *rsa.PrivateKey
+
+	if privateKeyPEM != "" {
+		// support base64-encoded PEM for env var transport
+		if decoded, err := base64.StdEncoding.DecodeString(privateKeyPEM); err == nil {
+			privateKeyPEM = string(decoded)
+		}
+		block, _ := pem.Decode([]byte(privateKeyPEM))
+		if block != nil {
+			key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+			if err == nil {
+				privateKey = key
+				slog.Info("RSA key loaded from config")
+			} else {
+				slog.Warn("failed to parse RSA key from config, generating new one", "error", err)
+			}
+		}
+	}
+
+	if privateKey == nil {
+		privateKey, _ = rsa.GenerateKey(rand.Reader, 2048)
+		slog.Warn("using ephemeral RSA key — tokens will be invalidated on restart")
+	}
+
 	return &JWTService{
 		issuer:          issuer,
 		accessTokenTTL:  accessTokenTTL,

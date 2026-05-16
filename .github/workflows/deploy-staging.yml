@@ -60,7 +60,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          envs: DATABASE_HOST,DATABASE_USER,DATABASE_PASSWORD,DATABASE_NAME,ADMIN_USERNAME,ADMIN_PASSWORD,JWT_ISSUER
+          envs: DATABASE_HOST,DATABASE_USER,DATABASE_PASSWORD,DATABASE_NAME,ADMIN_USERNAME,ADMIN_PASSWORD,JWT_ISSUER,JWT_PRIVATE_KEY
           script: |
             mkdir -p ~/projects/oauth2
 
@@ -78,6 +78,7 @@ jobs:
             AUTO_MIGRATE=true
             OTEL_SERVICE_NAME=oauth-service-staging
             OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+            JWT_PRIVATE_KEY=$JWT_PRIVATE_KEY
             EOF
 
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
@@ -91,3 +92,4 @@ jobs:
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           JWT_ISSUER: ${{ secrets.JWT_ISSUER }}
+          JWT_PRIVATE_KEY: ${{ secrets.JWT_PRIVATE_KEY }}
