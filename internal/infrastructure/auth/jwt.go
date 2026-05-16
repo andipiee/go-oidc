@@ -58,12 +58,25 @@ func NewJWTService(issuer string, accessTokenTTL, refreshTokenTTL int64, private
 		}
 		block, _ := pem.Decode([]byte(privateKeyPEM))
 		if block != nil {
-			key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-			if err == nil {
-				privateKey = key
-				slog.Info("RSA key loaded from config")
-			} else {
-				slog.Warn("failed to parse RSA key from config, generating new one", "error", err)
+			switch block.Type {
+			case "RSA PRIVATE KEY":
+				key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+				if err == nil {
+					privateKey = key
+					slog.Info("RSA key loaded from config (PKCS1)")
+				} else {
+					slog.Warn("failed to parse PKCS1 RSA key", "error", err)
+				}
+			case "PRIVATE KEY":
+				key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+				if err == nil {
+					if rsaKey, ok := key.(*rsa.PrivateKey); ok {
+						privateKey = rsaKey
+						slog.Info("RSA key loaded from config (PKCS8)")
+					}
+				} else {
+					slog.Warn("failed to parse PKCS8 RSA key", "error", err)
+				}
 			}
 		}
 	}
