@@ -38,6 +38,7 @@ type JWTConfig struct {
 	RefreshTokenTTL      string `yaml:"refresh_token_ttl"`
 	RefreshTokenRotation bool   `yaml:"refresh_token_rotation"`
 	CodeTTL              string `yaml:"code_ttl"`
+	PrivateKey           string `yaml:"private_key"`
 	AccessTokenTTLDur    int64  `yaml:"-"`
 	RefreshTokenTTLDur   int64  `yaml:"-"`
 	CodeTTLDur           int64  `yaml:"-"`
@@ -148,6 +149,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("JWT_CODE_TTL"); v != "" {
 		cfg.JWT.CodeTTL = v
+	}
+	if v := os.Getenv("JWT_PRIVATE_KEY"); v != "" {
+		cfg.JWT.PrivateKey = v
 	}
 	if v := os.Getenv("ADMIN_ENABLED"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {

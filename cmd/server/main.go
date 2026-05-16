@@ -52,7 +52,7 @@ func main() {
 	tokenRepo := repository.NewTokenRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
 
-	jwtService := auth.NewJWTService(cfg.JWT.Issuer, cfg.JWT.AccessTokenTTLDur, cfg.JWT.RefreshTokenTTLDur)
+	jwtService := auth.NewJWTService(cfg.JWT.Issuer, cfg.JWT.AccessTokenTTLDur, cfg.JWT.RefreshTokenTTLDur, cfg.JWT.PrivateKey)
 	cryptoService := auth.NewCryptoService()
 
 	providerConfigs := make([]oauth.ProviderConfig, len(cfg.OAuth.Providers))
