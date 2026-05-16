@@ -27,5 +27,9 @@ Thumbs.db
 /server
 /migrate
 .env
+.env.staging
+.env.prod
 *.log
 configs/config.yaml
+configs/config.staging.yaml
+configs/config.prod.yaml

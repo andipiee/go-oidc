@@ -2,11 +2,17 @@ package middleware
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var tracer = otel.Tracer("oauth-server/middleware")
 
 type responseWriter struct {
 	http.ResponseWriter
@@ -22,7 +28,12 @@ func Recovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Printf("[PANIC] %s %s: %v\n%s", r.Method, r.URL.Path, err, debug.Stack())
+				slog.ErrorContext(r.Context(), "panic recovered",
+					"error", err,
+					"method", r.Method,
+					"path", r.URL.Path,
+					"stack", string(debug.Stack()),
+				)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
 				fmt.Fprintf(w, `{"error":"internal_server_error"}`)
@@ -34,10 +45,26 @@ func Recovery(next http.Handler) http.Handler {
 
 func Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, span := tracer.Start(r.Context(), r.Method+" "+r.URL.Path,
+			trace.WithAttributes(
+				attribute.String("http.method", r.Method),
+				attribute.String("http.url", r.URL.String()),
+			),
+		)
+		defer span.End()
+
 		start := time.Now()
 		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rw, r)
-		log.Printf("[%d] %s %s %v", rw.status, r.Method, r.URL.Path, time.Since(start))
+		next.ServeHTTP(rw, r.WithContext(ctx))
+
+		span.SetAttributes(attribute.Int("http.status_code", rw.status))
+
+		slog.InfoContext(ctx, "request",
+			"status", rw.status,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"duration", time.Since(start).String(),
+		)
 	})
 }
 

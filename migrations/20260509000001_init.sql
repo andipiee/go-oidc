@@ -119,7 +119,7 @@ INSERT INTO clients (id, client_id, client_secret_hash, name, redirect_uris, gra
 VALUES (
     'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
     'default-client',
-    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', -- password: default
+    '$2a$10$USnAIkkd3NRD2G09.s0UuukINRHCJr6VmHmjng8oZLntCO3bzD29q', -- password: default
     'Default Client',
     '["http://localhost:3000/callback","http://localhost:8080/callback"]',
     '["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:device_code"]',
@@ -134,7 +134,7 @@ INSERT INTO users (id, email, password_hash, name, email_verified, created_at, u
 VALUES (
     'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a12',
     'demo@example.com',
-    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', -- password: default
+    '$2a$10$USnAIkkd3NRD2G09.s0UuukINRHCJr6VmHmjng8oZLntCO3bzD29q', -- password: default
     'Demo User',
     TRUE,
     NOW(),

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 
@@ -63,14 +64,14 @@ type AdminConfig struct {
 }
 
 func (c *Config) GetDSN() string {
-	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-		c.Database.User,
-		c.Database.Password,
-		c.Database.Host,
-		c.Database.Port,
-		c.Database.Name,
-		c.Database.SSLMode,
-	)
+	u := &url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(c.Database.User, c.Database.Password),
+		Host:     fmt.Sprintf("%s:%d", c.Database.Host, c.Database.Port),
+		Path:     c.Database.Name,
+		RawQuery: "sslmode=" + c.Database.SSLMode,
+	}
+	return u.String()
 }
 
 func LoadConfig(path string) (*Config, error) {

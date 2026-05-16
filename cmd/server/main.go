@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html/template"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,20 +16,32 @@ import (
 	"github.com/andipiee/go-oidc/internal/infrastructure/database"
 	"github.com/andipiee/go-oidc/internal/infrastructure/oauth"
 	"github.com/andipiee/go-oidc/internal/infrastructure/repository"
+	"github.com/andipiee/go-oidc/internal/infrastructure/telemetry"
 	"github.com/andipiee/go-oidc/internal/presentation/handler"
 	"github.com/andipiee/go-oidc/internal/presentation/httputil"
 	"github.com/andipiee/go-oidc/internal/presentation/middleware"
 )
 
 func main() {
+	telemetry.InitLogger()
+
+	ctx := context.Background()
+	otelShutdown, err := telemetry.Init(ctx)
+	if err != nil {
+		slog.Error("failed to initialize OpenTelemetry", "error", err)
+		os.Exit(1)
+	}
+
 	cfg, err := LoadConfig(configPath())
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
 	}
 
 	db, err := database.NewPostgresDB(cfg.GetDSN())
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		slog.Error("failed to connect to database", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 
@@ -147,9 +159,10 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Server starting on %s", addr)
+		slog.Info("server starting", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start server: %v", err)
+			slog.Error("failed to start server", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -157,11 +170,14 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	slog.Info("shutting down server")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("server forced to shutdown", "error", err)
 	}
-	log.Println("Server exited")
+	if err := otelShutdown(shutdownCtx); err != nil {
+		slog.Error("failed to shutdown OpenTelemetry", "error", err)
+	}
+	slog.Info("server exited")
 }
