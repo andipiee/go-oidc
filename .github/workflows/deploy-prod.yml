@@ -64,6 +64,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+          envs: DATABASE_HOST,DATABASE_USER,DATABASE_PASSWORD,DATABASE_NAME,ADMIN_USERNAME,ADMIN_PASSWORD,JWT_ISSUER
           script: |
             mkdir -p ~/projects/oauth2
 
