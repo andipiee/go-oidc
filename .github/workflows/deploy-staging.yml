@@ -2,7 +2,7 @@ name: Deploy Staging
 
 on:
   push:
-    branches: [master]
+    branches: [main]
 
 env:
   REGISTRY: ghcr.io
