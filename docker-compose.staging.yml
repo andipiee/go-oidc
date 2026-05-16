@@ -1,0 +1,21 @@
+services:
+  oauth-api-staging:
+    image: ghcr.io/andipiee/go-oidc:staging
+    env_file: .env.staging
+    environment:
+      - AUTO_MIGRATE=true
+    networks:
+      - infra-private-net
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+networks:
+  infra-private-net:
+    external: true

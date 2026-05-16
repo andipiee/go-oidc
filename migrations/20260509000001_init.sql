@@ -1,3 +1,5 @@
+-- +goose Up
+
 -- Create users table
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY,
@@ -9,6 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX idx_users_created_at ON users(created_at DESC);
 
 -- Create clients table
 CREATE TABLE IF NOT EXISTS clients (
@@ -25,6 +29,8 @@ CREATE TABLE IF NOT EXISTS clients (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX idx_clients_created_at ON clients(created_at DESC);
+
 -- Create authorization_codes table
 CREATE TABLE IF NOT EXISTS authorization_codes (
     id UUID PRIMARY KEY,
@@ -40,7 +46,6 @@ CREATE TABLE IF NOT EXISTS authorization_codes (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_authorization_codes_code ON authorization_codes(code);
 CREATE INDEX idx_authorization_codes_expires_at ON authorization_codes(expires_at);
 
 -- Create access_tokens table
@@ -54,7 +59,6 @@ CREATE TABLE IF NOT EXISTS access_tokens (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_access_tokens_token_hash ON access_tokens(token_hash);
 CREATE INDEX idx_access_tokens_expires_at ON access_tokens(expires_at);
 
 -- Create refresh_tokens table
@@ -69,7 +73,6 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
 CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
 
 -- Create user_sessions table
@@ -81,7 +84,6 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_user_sessions_session_id ON user_sessions(session_id);
 CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at);
 
 -- Create external_accounts table
@@ -110,8 +112,6 @@ CREATE TABLE IF NOT EXISTS device_codes (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_device_codes_device_code ON device_codes(device_code);
-CREATE INDEX idx_device_codes_user_code ON device_codes(user_code);
 CREATE INDEX idx_device_codes_expires_at ON device_codes(expires_at);
 
 -- Insert default admin client
@@ -119,7 +119,7 @@ INSERT INTO clients (id, client_id, client_secret_hash, name, redirect_uris, gra
 VALUES (
     'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
     'default-client',
-    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', -- password: default
+    '$2a$10$USnAIkkd3NRD2G09.s0UuukINRHCJr6VmHmjng8oZLntCO3bzD29q', -- password: default
     'Default Client',
     '["http://localhost:3000/callback","http://localhost:8080/callback"]',
     '["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:device_code"]',
@@ -134,9 +134,19 @@ INSERT INTO users (id, email, password_hash, name, email_verified, created_at, u
 VALUES (
     'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a12',
     'demo@example.com',
-    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', -- password: default
+    '$2a$10$USnAIkkd3NRD2G09.s0UuukINRHCJr6VmHmjng8oZLntCO3bzD29q', -- password: default
     'Demo User',
     TRUE,
     NOW(),
     NOW()
 ) ON CONFLICT (email) DO NOTHING;
+
+-- +goose Down
+DROP TABLE IF EXISTS device_codes;
+DROP TABLE IF EXISTS external_accounts;
+DROP TABLE IF EXISTS user_sessions;
+DROP TABLE IF EXISTS refresh_tokens;
+DROP TABLE IF EXISTS access_tokens;
+DROP TABLE IF EXISTS authorization_codes;
+DROP TABLE IF EXISTS clients;
+DROP TABLE IF EXISTS users;

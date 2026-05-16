@@ -85,14 +85,20 @@ func (uc *TokenUseCase) ExchangeCode(ctx context.Context, req TokenRequest) (*To
 		return nil, ErrInvalidClient
 	}
 
+	// B4: Client secret validation
+	if client.TokenEndpointAuthMethod != "none" {
+		if !uc.cryptoService.CheckPassword(req.ClientSecret, client.ClientSecretHash) {
+			return nil, ErrInvalidClient
+		}
+	}
+
 	if code.RedirectURI != req.RedirectURI {
 		return nil, ErrInvalidRedirectURI
 	}
 
-	if code.CodeChallenge != "" {
-		if !uc.cryptoService.VerifyCodeChallenge(req.CodeVerifier, code.CodeChallenge, code.CodeChallengeMethod) {
-			return nil, ErrInvalidCode
-		}
+	// B1: PKCE validation is always required
+	if !uc.cryptoService.VerifyCodeChallenge(req.CodeVerifier, code.CodeChallenge, code.CodeChallengeMethod) {
+		return nil, ErrInvalidCode
 	}
 
 	user, err := uc.userRepo.GetByID(ctx, code.UserID)
@@ -123,7 +129,7 @@ func (uc *TokenUseCase) ExchangeCode(ctx context.Context, req TokenRequest) (*To
 	refreshTokenHash := uc.jwtService.HashToken(refreshToken)
 
 	uc.tokenRepo.CreateAccessToken(ctx, &entity.AccessToken{
-		ID:        uuid.New(),
+		ID:        uuid.Must(uuid.NewV7()),
 		TokenHash: accessTokenHash,
 		ClientID:  client.ClientID,
 		UserID:    user.ID,
@@ -133,7 +139,7 @@ func (uc *TokenUseCase) ExchangeCode(ctx context.Context, req TokenRequest) (*To
 	})
 
 	uc.tokenRepo.CreateRefreshToken(ctx, &entity.RefreshToken{
-		ID:        uuid.New(),
+		ID:        uuid.Must(uuid.NewV7()),
 		TokenHash: refreshTokenHash,
 		ClientID:  client.ClientID,
 		UserID:    user.ID,
@@ -150,7 +156,19 @@ func (uc *TokenUseCase) ExchangeCode(ctx context.Context, req TokenRequest) (*To
 	}
 
 	if includesScope(code.Scope, "openid") {
-		resp.IDToken = accessToken
+		// B2: Generate a proper ID token (separate from access token)
+		idToken, err := uc.jwtService.GenerateIDToken(
+			user.ID.String(),
+			client.ClientID,
+			code.Nonce,
+			user.Email,
+			user.Name,
+			user.Picture,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate id token: %w", err)
+		}
+		resp.IDToken = idToken
 		resp.RefreshToken = refreshToken
 	}
 
@@ -170,6 +188,17 @@ func (uc *TokenUseCase) RefreshToken(ctx context.Context, req TokenRequest) (*To
 
 	if refreshToken.RevokedAt != nil || time.Now().After(refreshToken.ExpiresAt) {
 		return nil, ErrInvalidToken
+	}
+
+	// B4: Client secret validation on refresh
+	client, err := uc.clientRepo.GetByClientID(ctx, refreshToken.ClientID)
+	if err != nil || client == nil {
+		return nil, ErrInvalidClient
+	}
+	if client.TokenEndpointAuthMethod != "none" {
+		if !uc.cryptoService.CheckPassword(req.ClientSecret, client.ClientSecretHash) {
+			return nil, ErrInvalidClient
+		}
 	}
 
 	user, err := uc.userRepo.GetByID(ctx, refreshToken.UserID)
@@ -198,7 +227,7 @@ func (uc *TokenUseCase) RefreshToken(ctx context.Context, req TokenRequest) (*To
 	newRefreshTokenHash := uc.jwtService.HashToken(newRefreshToken)
 
 	uc.tokenRepo.CreateAccessToken(ctx, &entity.AccessToken{
-		ID:        uuid.New(),
+		ID:        uuid.Must(uuid.NewV7()),
 		TokenHash: accessTokenHash,
 		ClientID:  refreshToken.ClientID,
 		UserID:    user.ID,
@@ -207,12 +236,11 @@ func (uc *TokenUseCase) RefreshToken(ctx context.Context, req TokenRequest) (*To
 		CreatedAt: time.Now(),
 	})
 
-	if uc.config.RefreshTokenRotation {
-		uc.tokenRepo.RevokeRefreshToken(ctx, tokenHash)
-	}
+	// B7: Always revoke old refresh token (mandatory rotation)
+	uc.tokenRepo.RevokeRefreshToken(ctx, tokenHash)
 
 	uc.tokenRepo.CreateRefreshToken(ctx, &entity.RefreshToken{
-		ID:        uuid.New(),
+		ID:        uuid.Must(uuid.NewV7()),
 		TokenHash: newRefreshTokenHash,
 		ClientID:  refreshToken.ClientID,
 		UserID:    user.ID,
@@ -229,7 +257,19 @@ func (uc *TokenUseCase) RefreshToken(ctx context.Context, req TokenRequest) (*To
 	}
 
 	if includesScope(refreshToken.Scope, "openid") {
-		resp.IDToken = accessToken
+		// B2: Generate proper ID token (no nonce on refresh per spec)
+		idToken, err := uc.jwtService.GenerateIDToken(
+			user.ID.String(),
+			refreshToken.ClientID,
+			"",
+			user.Email,
+			user.Name,
+			user.Picture,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate id token: %w", err)
+		}
+		resp.IDToken = idToken
 		resp.RefreshToken = newRefreshToken
 	}
 

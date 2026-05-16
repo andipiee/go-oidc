@@ -35,8 +35,8 @@ func (uc *UserUseCase) GetUserByEmail(ctx context.Context, email string) (*entit
 
 func (uc *UserUseCase) CreateSession(ctx context.Context, userID uuid.UUID) (*entity.UserSession, error) {
 	session := &entity.UserSession{
-		ID:        uuid.New(),
-		SessionID: uuid.New().String(),
+		ID:        uuid.Must(uuid.NewV7()),
+		SessionID: uuid.Must(uuid.NewV7()).String(),
 		UserID:    userID,
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 		CreatedAt: time.Now(),
@@ -94,7 +94,7 @@ func (uc *DeviceUseCase) CreateDeviceCode(ctx context.Context, clientID, scope s
 	}
 
 	deviceCode := &entity.DeviceCode{
-		ID:              uuid.New(),
+		ID:              uuid.Must(uuid.NewV7()),
 		DeviceCode:      generateRandomString(64),
 		UserCode:        generateUserCode(),
 		ClientID:        clientID,

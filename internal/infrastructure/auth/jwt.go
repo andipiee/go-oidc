@@ -29,6 +29,7 @@ type Claims struct {
 	Email    string `json:"email,omitempty"`
 	Name     string `json:"name,omitempty"`
 	Picture  string `json:"picture,omitempty"`
+	Nonce    string `json:"nonce,omitempty"`
 }
 
 type JWKS struct {
@@ -59,6 +60,7 @@ func (s *JWTService) GenerateAccessToken(userID, clientID, scope, email, name, p
 	now := time.Now()
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(s.accessTokenTTL) * time.Second)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
@@ -70,6 +72,28 @@ func (s *JWTService) GenerateAccessToken(userID, clientID, scope, email, name, p
 		Email:    email,
 		Name:     name,
 		Picture:  picture,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = "1"
+	return token.SignedString(s.privateKey)
+}
+
+func (s *JWTService) GenerateIDToken(userID, clientID, nonce, email, name, picture string) (string, error) {
+	now := time.Now()
+	claims := Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID,
+			Audience:  jwt.ClaimStrings{clientID},
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(s.accessTokenTTL) * time.Second)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			Issuer:    s.issuer,
+			ID:        generateRandomString(32),
+		},
+		Email:   email,
+		Name:    name,
+		Picture: picture,
+		Nonce:   nonce,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
@@ -184,10 +208,10 @@ func randIntn(n int) int {
 }
 
 func (s *CryptoService) VerifyCodeChallenge(codeVerifier, codeChallenge, method string) bool {
-	if method == "S256" {
-		hash := sha256.Sum256([]byte(codeVerifier))
-		computed := base64.RawURLEncoding.EncodeToString(hash[:])
-		return computed == codeChallenge
+	if method != "S256" {
+		return false
 	}
-	return codeVerifier == codeChallenge
+	hash := sha256.Sum256([]byte(codeVerifier))
+	computed := base64.RawURLEncoding.EncodeToString(hash[:])
+	return computed == codeChallenge
 }

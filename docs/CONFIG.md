@@ -1,106 +1,91 @@
 # Configuration Reference
 
+All configuration is loaded from `configs/config.yaml`. The server must be started from the project root directory since the config path is relative.
+
 ## Server Configuration
 
 ```yaml
 server:
   host: "0.0.0.0"    # Host to bind to
-  port: 8080         # Port to listen on
+  port: 8080          # Port to listen on
 ```
 
 ## Database Configuration
 
 ```yaml
 database:
-  host: "postgres"      # Database host
-  port: 5432            # Database port
-  user: "postgres"      # Database user
-  password: "secret"    # Database password
-  name: "oauth2"        # Database name
-  sslmode: "disable"    # SSL mode (disable, require, verify-ca, verify-full)
+  host: "localhost"       # Database host
+  port: 5432              # Database port
+  user: "postgres"        # Database user
+  password: "changeme"    # Database password (change in production)
+  name: "oauth2"          # Database name
+  sslmode: "disable"      # SSL mode (disable, require, verify-ca, verify-full)
 ```
+
+> **Production:** Always set `sslmode: "require"` or stricter in production environments.
 
 ## JWT Configuration
 
 ```yaml
 jwt:
-  issuer: "http://localhost:8080"    # Token issuer URL
-  access_token_ttl: "15m"             # Access token TTL (s, m, h, d)
-  refresh_token_ttl: "24h"            # Refresh token TTL
-  refresh_token_rotation: true        # Enable refresh token rotation
-  code_ttl: "5m"                      # Authorization code TTL
+  issuer: "http://localhost:8080"    # Token issuer URL (must match your public URL)
+  access_token_ttl: "15m"           # Access token time-to-live
+  refresh_token_ttl: "24h"          # Refresh token time-to-live
+  refresh_token_rotation: true      # (Legacy field — rotation is now always mandatory)
+  code_ttl: "5m"                    # Authorization code time-to-live
 ```
 
 ### Token TTL Format
 
-Token TTL can be specified in the following formats:
-- `s` - seconds (e.g., `300s` or `300`)
-- `m` - minutes (e.g., `15m`)
-- `h` - hours (e.g., `24h`)
-- `d` - days (e.g., `7d`)
+Supported duration suffixes:
+- `s` — seconds (e.g., `300s`)
+- `m` — minutes (e.g., `15m`)
+- `h` — hours (e.g., `24h`)
+- `d` — days (e.g., `7d`)
+
+### Key Management
+
+The server generates a fresh RSA-2048 key pair on every startup. This means:
+- All previously issued tokens become invalid after a restart
+- The JWKS endpoint (`/.well-known/jwks.json`) always reflects the current key
+- For production, consider implementing persistent key storage
 
 ## OAuth Providers
+
+External identity providers can be configured for federated login:
 
 ```yaml
 oauth:
   providers:
-    - name: "google"                 # Provider identifier
-      client_id: ""                  # OAuth2 client ID
-      client_secret: ""              # OAuth2 client secret
-      scopes:                        # OAuth2 scopes
+    - name: "google"
+      client_id: ""          # Your OAuth2 client ID
+      client_secret: ""      # Your OAuth2 client secret
+      scopes:
         - "openid"
         - "profile"
         - "email"
       auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
       token_url: "https://oauth2.googleapis.com/token"
       user_info_url: "https://www.googleapis.com/oauth2/v3/userinfo"
-```
 
-### Supported Providers
-
-#### Google
-```yaml
-- name: "google"
-  client_id: "${GOOGLE_CLIENT_ID}"
-  client_secret: "${GOOGLE_CLIENT_SECRET}"
-  scopes:
-    - "openid"
-    - "profile"
-    - "email"
-  auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
-  token_url: "https://oauth2.googleapis.com/token"
-  user_info_url: "https://www.googleapis.com/oauth2/v3/userinfo"
-```
-
-#### GitHub
-```yaml
-- name: "github"
-  client_id: "${GITHUB_CLIENT_ID}"
-  client_secret: "${GITHUB_CLIENT_SECRET}"
-  scopes:
-    - "read:user"
-    - "user:email"
-  auth_url: "https://github.com/login/oauth/authorize"
-  token_url: "https://github.com/login/oauth/access_token"
-  user_info_url: "https://api.github.com/user"
+    - name: "github"
+      client_id: ""
+      client_secret: ""
+      scopes:
+        - "read:user"
+        - "user:email"
+      auth_url: "https://github.com/login/oauth/authorize"
+      token_url: "https://github.com/login/oauth/access_token"
+      user_info_url: "https://api.github.com/user"
 ```
 
 ## Admin Configuration
 
 ```yaml
 admin:
-  enabled: true          # Enable admin API
-  username: "admin"      # Admin username
-  password: "changeme"    # Admin password
-```
-
-## Environment Variables
-
-You can also use environment variables in the configuration file:
-
-```yaml
-database:
-  password: "${DB_PASSWORD}"
+  enabled: true            # Enable/disable admin API endpoints
+  username: "admin"        # Admin username for Basic Auth
+  password: "changeme"     # Admin password (change in production)
 ```
 
 ## Complete Example
@@ -111,10 +96,10 @@ server:
   port: 8080
 
 database:
-  host: "postgres"
+  host: "localhost"
   port: 5432
   user: "postgres"
-  password: "${DB_PASSWORD}"
+  password: "changeme"
   name: "oauth2"
   sslmode: "disable"
 
@@ -128,8 +113,8 @@ jwt:
 oauth:
   providers:
     - name: "google"
-      client_id: "${GOOGLE_CLIENT_ID}"
-      client_secret: "${GOOGLE_CLIENT_SECRET}"
+      client_id: ""
+      client_secret: ""
       scopes:
         - "openid"
         - "profile"
@@ -137,9 +122,18 @@ oauth:
       auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
       token_url: "https://oauth2.googleapis.com/token"
       user_info_url: "https://www.googleapis.com/oauth2/v3/userinfo"
+    - name: "github"
+      client_id: ""
+      client_secret: ""
+      scopes:
+        - "read:user"
+        - "user:email"
+      auth_url: "https://github.com/login/oauth/authorize"
+      token_url: "https://github.com/login/oauth/access_token"
+      user_info_url: "https://api.github.com/user"
 
 admin:
   enabled: true
-  username: "${ADMIN_USERNAME}"
-  password: "${ADMIN_PASSWORD}"
+  username: "admin"
+  password: "changeme"
 ```

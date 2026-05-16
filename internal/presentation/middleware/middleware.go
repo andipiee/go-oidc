@@ -1,58 +1,97 @@
 package middleware
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"runtime/debug"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
-func Logger() gin.HandlerFunc {
-	return func(c *gin.Context) {
+var tracer = otel.Tracer("oauth-server/middleware")
+
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.status = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func Recovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				slog.ErrorContext(r.Context(), "panic recovered",
+					"error", err,
+					"method", r.Method,
+					"path", r.URL.Path,
+					"stack", string(debug.Stack()),
+				)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, `{"error":"internal_server_error"}`)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func Logger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, span := tracer.Start(r.Context(), r.Method+" "+r.URL.Path,
+			trace.WithAttributes(
+				attribute.String("http.method", r.Method),
+				attribute.String("http.url", r.URL.String()),
+			),
+		)
+		defer span.End()
+
 		start := time.Now()
-		path := c.Request.URL.Path
+		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rw, r.WithContext(ctx))
 
-		c.Next()
+		span.SetAttributes(attribute.Int("http.status_code", rw.status))
 
-		latency := time.Since(start)
-		status := c.Writer.Status()
-
-		log.Printf("[%d] %s %s %v", status, c.Request.Method, path, latency)
-	}
+		slog.InfoContext(ctx, "request",
+			"status", rw.status,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"duration", time.Since(start).String(),
+		)
+	})
 }
 
-func CORS() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
+func CORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
 
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(204)
 			return
 		}
 
-		c.Next()
-	}
+		next.ServeHTTP(w, r)
+	})
 }
 
-func BasicAuth(username, password string) gin.HandlerFunc {
-	users := map[string]string{
-		username: password,
-	}
-
-	return func(c *gin.Context) {
-		u, p, ok := c.Request.BasicAuth()
-		if !ok {
-			c.AbortWithStatus(401)
-			return
-		}
-
-		if expectedPass, exists := users[u]; !exists || expectedPass != p {
-			c.AbortWithStatus(401)
-			return
-		}
-
-		c.Next()
+func BasicAuth(username, password string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			u, p, ok := r.BasicAuth()
+			if !ok || u != username || p != password {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
 }

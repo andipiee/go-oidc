@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"html/template"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,23 +16,36 @@ import (
 	"github.com/andipiee/go-oidc/internal/infrastructure/database"
 	"github.com/andipiee/go-oidc/internal/infrastructure/oauth"
 	"github.com/andipiee/go-oidc/internal/infrastructure/repository"
+	"github.com/andipiee/go-oidc/internal/infrastructure/telemetry"
 	"github.com/andipiee/go-oidc/internal/presentation/handler"
+	"github.com/andipiee/go-oidc/internal/presentation/httputil"
 	"github.com/andipiee/go-oidc/internal/presentation/middleware"
-
-	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	cfg, err := LoadConfig("configs/config.yaml")
+	telemetry.InitLogger()
+
+	ctx := context.Background()
+	otelShutdown, err := telemetry.Init(ctx)
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		slog.Error("failed to initialize OpenTelemetry", "error", err)
+		os.Exit(1)
+	}
+
+	cfg, err := LoadConfig(configPath())
+	if err != nil {
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
 	}
 
 	db, err := database.NewPostgresDB(cfg.GetDSN())
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		slog.Error("failed to connect to database", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
+
+	tmpl := template.Must(template.ParseGlob("web/static/*.html"))
 
 	userRepo := repository.NewUserRepository(db)
 	clientRepo := repository.NewClientRepository(db)
@@ -56,6 +70,8 @@ func main() {
 	providerService := oauth.NewProviderService(providerConfigs)
 	_ = providerService
 
+	userUseCase := usecase.NewUserUseCase(userRepo, sessionRepo)
+
 	authorizeUseCase := usecase.NewAuthorizeUseCase(clientRepo, userRepo, tokenRepo, jwtService, cryptoService, cfg.JWT.CodeTTLDur)
 
 	tokenUseCaseCfg := usecase.JWTConfig{
@@ -66,74 +82,87 @@ func main() {
 		CodeTTLDur:           cfg.JWT.CodeTTLDur,
 	}
 	tokenUseCase := usecase.NewTokenUseCase(clientRepo, userRepo, tokenRepo, jwtService, cryptoService, tokenUseCaseCfg)
-	userUseCase := usecase.NewUserUseCase(userRepo, sessionRepo)
 	deviceUseCase := usecase.NewDeviceUseCase(clientRepo, userRepo, tokenRepo, jwtService, cfg.JWT.CodeTTLDur)
 
-	authorizeHandler := handler.NewAuthorizeHandler(authorizeUseCase)
+	authorizeHandler := handler.NewAuthorizeHandler(authorizeUseCase, userUseCase)
 	tokenHandler := handler.NewTokenHandler(tokenUseCase)
 	userinfoHandler := handler.NewUserInfoHandler(userUseCase, jwtService)
-	deviceHandler := handler.NewDeviceHandler(deviceUseCase)
+	deviceHandler := handler.NewDeviceHandler(deviceUseCase, tmpl)
 	adminHandler := handler.NewAdminHandler(userRepo, clientRepo, handler.AdminConfig(cfg.Admin))
-	discoveryHandler := handler.NewDiscoveryHandler(cfg.JWT.Issuer, cfg.Server.Port)
+	discoveryHandler := handler.NewDiscoveryHandler(cfg.JWT.Issuer, cfg.Server.Port, jwtService)
+	authHandler := handler.NewAuthHandler(userRepo, cryptoService, jwtService, userUseCase, tmpl)
+	registrationHandler := handler.NewClientRegistrationHandler(clientRepo, cryptoService)
 
-	router := gin.Default()
-	router.Use(middleware.Logger())
-	router.Use(middleware.CORS())
+	mux := http.NewServeMux()
 
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	// Health
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	router.GET("/.well-known/openid-configuration", discoveryHandler.HandleDiscovery)
-	router.GET("/.well-known/jwks.json", discoveryHandler.HandleJWKS)
+	// Discovery
+	mux.HandleFunc("GET /.well-known/openid-configuration", discoveryHandler.HandleDiscovery)
+	mux.HandleFunc("GET /.well-known/jwks.json", discoveryHandler.HandleJWKS)
 
-	oauth2Group := router.Group("/oauth2")
-	{
-		oauth2Group.GET("/authorize", authorizeHandler.HandleAuthorize)
-		oauth2Group.POST("/authorize", authorizeHandler.HandleAuthorizePost)
-		oauth2Group.POST("/token", tokenHandler.HandleToken)
-		oauth2Group.POST("/revoke", tokenHandler.HandleRevoke)
-		oauth2Group.POST("/introspect", tokenHandler.HandleIntrospect)
-	}
+	// OAuth2
+	mux.HandleFunc("GET /oauth2/authorize", authorizeHandler.HandleAuthorize)
+	mux.HandleFunc("POST /oauth2/authorize", authorizeHandler.HandleAuthorizePost)
+	mux.HandleFunc("POST /oauth2/token", tokenHandler.HandleToken)
+	mux.HandleFunc("POST /oauth2/revoke", tokenHandler.HandleRevoke)
+	mux.HandleFunc("POST /oauth2/introspect", tokenHandler.HandleIntrospect)
 
-	oidcGroup := router.Group("/oidc")
-	{
-		oidcGroup.GET("/userinfo", userinfoHandler.HandleUserInfo)
-		oidcGroup.POST("/device/authorize", deviceHandler.HandleDeviceAuthorize)
-		oidcGroup.GET("/device", deviceHandler.HandleDevice)
-		oidcGroup.POST("/register", handler.NewClientRegistrationHandler(clientRepo, cryptoService).HandleRegistration)
-	}
+	// OIDC
+	mux.HandleFunc("GET /oidc/userinfo", userinfoHandler.HandleUserInfo)
+	mux.HandleFunc("POST /oidc/device/authorize", deviceHandler.HandleDeviceAuthorize)
+	mux.HandleFunc("GET /oidc/device", deviceHandler.HandleDevice)
+	mux.HandleFunc("POST /oidc/register", registrationHandler.HandleRegistration)
 
+	// Admin (with BasicAuth)
 	if cfg.Admin.Enabled {
-		adminGroup := router.Group("/admin")
-		adminGroup.Use(middleware.BasicAuth(cfg.Admin.Username, cfg.Admin.Password))
-		{
-			adminGroup.GET("/", adminHandler.HandleIndex)
-			adminGroup.GET("/users", adminHandler.HandleListUsers)
-			adminGroup.POST("/users", adminHandler.HandleCreateUser)
-			adminGroup.DELETE("/users/:id", adminHandler.HandleDeleteUser)
-			adminGroup.GET("/clients", adminHandler.HandleListClients)
-			adminGroup.POST("/clients", adminHandler.HandleCreateClient)
-			adminGroup.DELETE("/clients/:id", adminHandler.HandleDeleteClient)
-		}
+		adminAuth := middleware.BasicAuth(cfg.Admin.Username, cfg.Admin.Password)
+		mux.Handle("GET /admin/", adminAuth(http.HandlerFunc(adminHandler.HandleIndex)))
+		mux.Handle("GET /admin/users", adminAuth(http.HandlerFunc(adminHandler.HandleListUsers)))
+		mux.Handle("POST /admin/users", adminAuth(http.HandlerFunc(adminHandler.HandleCreateUser)))
+		mux.Handle("DELETE /admin/users/{id}", adminAuth(http.HandlerFunc(adminHandler.HandleDeleteUser)))
+		mux.Handle("GET /admin/clients", adminAuth(http.HandlerFunc(adminHandler.HandleListClients)))
+		mux.Handle("POST /admin/clients", adminAuth(http.HandlerFunc(adminHandler.HandleCreateClient)))
+		mux.Handle("DELETE /admin/clients/{id}", adminAuth(http.HandlerFunc(adminHandler.HandleDeleteClient)))
 	}
 
-	staticHandler := http.FileServer(http.Dir("web/static"))
-	router.GET("/static/*any", gin.WrapH(staticHandler))
-	router.GET("/", func(c *gin.Context) {
-		c.File("web/static/index.html")
+	// Auth
+	mux.HandleFunc("GET /auth/login", authHandler.ShowLoginPage)
+	mux.HandleFunc("POST /auth/login", authHandler.HandleLoginForm)
+	mux.HandleFunc("POST /auth/login/json", authHandler.HandleLogin)
+	mux.HandleFunc("GET /auth/register", authHandler.ShowRegisterPage)
+	mux.HandleFunc("POST /auth/register", authHandler.HandleRegisterForm)
+	mux.HandleFunc("POST /auth/register/json", authHandler.HandleRegister)
+	mux.HandleFunc("POST /auth/logout", authHandler.HandleLogout)
+
+	// Static files
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
+
+	// Root
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "web/static/index.html")
 	})
+
+	// Global middleware chain (outermost runs first)
+	var h http.Handler = mux
+	h = middleware.CORS(h)
+	h = middleware.Recovery(h)
+	h = middleware.Logger(h)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: router,
+		Handler: h,
 	}
 
 	go func() {
-		log.Printf("Server starting on %s", addr)
+		slog.Info("server starting", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start server: %v", err)
+			slog.Error("failed to start server", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -141,11 +170,14 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	slog.Info("shutting down server")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("server forced to shutdown", "error", err)
 	}
-	log.Println("Server exited")
+	if err := otelShutdown(shutdownCtx); err != nil {
+		slog.Error("failed to shutdown OpenTelemetry", "error", err)
+	}
+	slog.Info("server exited")
 }

@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/andipiee/go-oidc/internal/domain/entity"
 	"github.com/andipiee/go-oidc/internal/domain/repository"
 	"github.com/andipiee/go-oidc/internal/infrastructure/auth"
 	"github.com/google/uuid"
+
+	"github.com/andipiee/go-oidc/internal/domain/entity"
 )
 
 var (
@@ -59,6 +60,7 @@ type AuthorizeParams struct {
 	Nonce               string
 	CodeChallenge       string
 	CodeChallengeMethod string
+	UserID              uuid.UUID
 }
 
 type AuthorizeResult struct {
@@ -84,22 +86,14 @@ func (uc *AuthorizeUseCase) Authorize(ctx context.Context, params AuthorizeParam
 		return nil, ErrInvalidRedirectURI
 	}
 
-	user, err := uc.userRepo.GetByEmail(ctx, "demo@example.com")
+	user, err := uc.userRepo.GetByID(ctx, params.UserID)
 	if err != nil || user == nil {
-		user = &entity.User{
-			ID:            uuid.New(),
-			Email:         "demo@example.com",
-			Name:          "Demo User",
-			EmailVerified: true,
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
-		}
-		uc.userRepo.Create(ctx, user)
+		return nil, ErrInvalidUser
 	}
 
 	code := uc.cryptoService.GenerateRandomString(32)
 	authCode := &entity.AuthorizationCode{
-		ID:                  uuid.New(),
+		ID:                  uuid.Must(uuid.NewV7()),
 		Code:                code,
 		ClientID:            params.ClientID,
 		UserID:              user.ID,

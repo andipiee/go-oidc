@@ -1,0 +1,92 @@
+name: Deploy Staging
+
+on:
+  push:
+    branches: [master]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging-${{ github.sha }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy docker-compose to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          source: docker-compose.staging.yml
+          target: ~/projects/oauth2/
+
+      - name: Write env file and deploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            mkdir -p ~/projects/oauth2
+
+            cat > ~/projects/oauth2/.env.staging << EOF
+            DATABASE_HOST=$DATABASE_HOST
+            DATABASE_PORT=5432
+            DATABASE_USER=$DATABASE_USER
+            DATABASE_PASSWORD=$DATABASE_PASSWORD
+            DATABASE_NAME=$DATABASE_NAME
+            DATABASE_SSLMODE=disable
+            JWT_ISSUER=$JWT_ISSUER
+            ADMIN_ENABLED=true
+            ADMIN_USERNAME=$ADMIN_USERNAME
+            ADMIN_PASSWORD=$ADMIN_PASSWORD
+            AUTO_MIGRATE=true
+            OTEL_SERVICE_NAME=oauth-service-staging
+            OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+            EOF
+
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
+            cd ~/projects/oauth2
+            docker compose -f docker-compose.staging.yml up -d --no-deps --scale oauth-api-staging=2
+        env:
+          DATABASE_HOST: ${{ secrets.DATABASE_HOST }}
+          DATABASE_USER: ${{ secrets.DATABASE_USER }}
+          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          DATABASE_NAME: ${{ secrets.DATABASE_NAME }}
+          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          JWT_ISSUER: ${{ secrets.JWT_ISSUER }}

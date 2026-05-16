@@ -32,7 +32,7 @@ func (r *UserRepository) Create(ctx context.Context, user *entity.User) error {
 
 func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*entity.User, error) {
 	query := `
-		SELECT id, email, password_hash, name, email_verified, picture, created_at, updated_at
+		SELECT id, email, password_hash, name, email_verified, COALESCE(picture, ''), created_at, updated_at
 		FROM users WHERE id = $1
 	`
 	var user entity.User
@@ -48,7 +48,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*entity.Use
 
 func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*entity.User, error) {
 	query := `
-		SELECT id, email, password_hash, name, email_verified, picture, created_at, updated_at
+		SELECT id, email, password_hash, name, email_verified, COALESCE(picture, ''), created_at, updated_at
 		FROM users WHERE email = $1
 	`
 	var user entity.User
@@ -82,7 +82,7 @@ func (r *UserRepository) Delete(ctx context.Context, id uuid.UUID) error {
 
 func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]*entity.User, error) {
 	query := `
-		SELECT id, email, password_hash, name, email_verified, picture, created_at, updated_at
+		SELECT id, email, password_hash, name, email_verified, COALESCE(picture, ''), created_at, updated_at
 		FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2
 	`
 	rows, err := r.db.Pool().Query(ctx, query, limit, offset)
@@ -107,7 +107,7 @@ func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]*entity
 
 func (r *UserRepository) GetByExternalAccount(ctx context.Context, provider, providerUserID string) (*entity.User, error) {
 	query := `
-		SELECT u.id, u.email, u.password_hash, u.name, u.email_verified, u.picture, u.created_at, u.updated_at
+		SELECT u.id, u.email, u.password_hash, u.name, u.email_verified, COALESCE(u.picture, ''), u.created_at, u.updated_at
 		FROM users u
 		JOIN external_accounts ea ON u.id = ea.user_id
 		WHERE ea.provider = $1 AND ea.provider_user_id = $2
