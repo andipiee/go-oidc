@@ -109,29 +109,37 @@
         <div class="error">{{.error}}</div>
         {{end}}
         {{if .success}}
-        <div class="success">{{.success}} <a href="/auth/login">Login</a></div>
+        <div class="success">{{.success}} <a href="/auth/login{{.oauthQuery}}">Login</a></div>
         {{end}}
         <form method="POST" action="/auth/register">
+            <input type="hidden" name="client_id" value="{{.clientID}}">
+            <input type="hidden" name="redirect_uri" value="{{.redirectURI}}">
+            <input type="hidden" name="state" value="{{.state}}">
+            <input type="hidden" name="scope" value="{{.scope}}">
+            <input type="hidden" name="nonce" value="{{.nonce}}">
+            <input type="hidden" name="code_challenge" value="{{.codeChallenge}}">
+            <input type="hidden" name="code_challenge_method" value="{{.codeChallengeMethod}}">
+
             <div class="form-group">
                 <label for="name">Name</label>
                 <input type="text" id="name" name="name" value="{{.name}}" required>
             </div>
-            
+
             <div class="form-group">
                 <label for="email">Email</label>
                 <input type="email" id="email" name="email" value="{{.email}}" required>
             </div>
-            
+
             <div class="form-group">
                 <label for="password">Password</label>
                 <input type="password" id="password" name="password" minlength="6" required>
             </div>
-            
+
             <button type="submit">Register</button>
         </form>
-        
+
         <div class="links">
-            Already have an account? <a href="/auth/login">Login</a>
+            Already have an account? <a href="/auth/login{{.oauthQuery}}">Login</a>
         </div>
     </div>
 </body>
