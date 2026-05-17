@@ -193,15 +193,16 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) ShowLoginPage(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	httputil.HTML(w, h.tmpl, "login.html", http.StatusOK, map[string]any{
-		"error":              "",
-		"email":              "",
-		"clientID":           q.Get("client_id"),
-		"redirectURI":        q.Get("redirect_uri"),
-		"state":              q.Get("state"),
-		"scope":              q.Get("scope"),
-		"nonce":              q.Get("nonce"),
-		"codeChallenge":      q.Get("code_challenge"),
+		"error":               "",
+		"email":               "",
+		"clientID":            q.Get("client_id"),
+		"redirectURI":         q.Get("redirect_uri"),
+		"state":               q.Get("state"),
+		"scope":               q.Get("scope"),
+		"nonce":               q.Get("nonce"),
+		"codeChallenge":       q.Get("code_challenge"),
 		"codeChallengeMethod": q.Get("code_challenge_method"),
+		"oauthQuery":          oauthQueryFromValues(q),
 	})
 }
 
@@ -256,27 +257,27 @@ func (h *AuthHandler) HandleLoginForm(w http.ResponseWriter, r *http.Request) {
 	secure := r.TLS != nil
 	http.SetCookie(w, &http.Cookie{Name: "session_id", Value: session.SessionID, MaxAge: 86400, Path: "/", Secure: secure, HttpOnly: true})
 
+	// No OAuth context — user logged in directly on the auth server's own UI.
+	// Send them to the homepage; do NOT dump raw JSON in a browser tab.
+	// (API clients should use POST /auth/login/json which returns AuthResponse.)
 	if redirectURI == "" && clientID == "" {
-		httputil.JSON(w, http.StatusOK, map[string]any{
-			"message": "Login successful",
-			"user": UserResponse{
-				ID:            user.ID.String(),
-				Email:         user.Email,
-				Name:          user.Name,
-				EmailVerified: user.EmailVerified,
-				CreatedAt:     user.CreatedAt,
-			},
-		})
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 
-	// Redirect back to authorize endpoint with all original params
+	http.Redirect(w, r, "/oauth2/authorize?"+buildOAuthParams(clientID, redirectURI, state, scope, nonce, codeChallenge, codeChallengeMethod).Encode(), http.StatusFound)
+}
+
+// buildOAuthParams reconstructs the authorize-endpoint query string from the
+// hidden form fields carried through login/register. Centralized so login and
+// register can't drift in what they preserve.
+func buildOAuthParams(clientID, redirectURI, state, scope, nonce, codeChallenge, codeChallengeMethod string) url.Values {
 	params := url.Values{
-		"client_id":    {clientID},
-		"redirect_uri": {redirectURI},
+		"client_id":     {clientID},
+		"redirect_uri":  {redirectURI},
 		"response_type": {"code"},
-		"state":        {state},
-		"scope":        {scope},
+		"state":         {state},
+		"scope":         {scope},
 	}
 	if nonce != "" {
 		params.Set("nonce", nonce)
@@ -287,7 +288,7 @@ func (h *AuthHandler) HandleLoginForm(w http.ResponseWriter, r *http.Request) {
 	if codeChallengeMethod != "" {
 		params.Set("code_challenge_method", codeChallengeMethod)
 	}
-	http.Redirect(w, r, "/oauth2/authorize?"+params.Encode(), http.StatusFound)
+	return params
 }
 
 func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
@@ -301,12 +302,40 @@ func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) ShowRegisterPage(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
 	httputil.HTML(w, h.tmpl, "register.html", http.StatusOK, map[string]any{
-		"error":   "",
-		"success": "",
-		"name":    "",
-		"email":   "",
+		"error":               "",
+		"success":             "",
+		"name":                "",
+		"email":               "",
+		"clientID":            q.Get("client_id"),
+		"redirectURI":         q.Get("redirect_uri"),
+		"state":               q.Get("state"),
+		"scope":               q.Get("scope"),
+		"nonce":               q.Get("nonce"),
+		"codeChallenge":       q.Get("code_challenge"),
+		"codeChallengeMethod": q.Get("code_challenge_method"),
+		"oauthQuery":          oauthQueryFromValues(q),
 	})
+}
+
+// oauthQueryFromValues returns "?..." if the request carries an OAuth flow,
+// otherwise "". Used by login.html / register.html to render cross-links that
+// preserve the in-flight authorize parameters.
+func oauthQueryFromValues(q url.Values) string {
+	if q.Get("client_id") == "" && q.Get("redirect_uri") == "" {
+		return ""
+	}
+	out := url.Values{}
+	for _, k := range []string{
+		"client_id", "redirect_uri", "state", "scope",
+		"nonce", "code_challenge", "code_challenge_method",
+	} {
+		if v := q.Get(k); v != "" {
+			out.Set(k, v)
+		}
+	}
+	return "?" + out.Encode()
 }
 
 func (h *AuthHandler) HandleRegisterForm(w http.ResponseWriter, r *http.Request) {
@@ -315,12 +344,34 @@ func (h *AuthHandler) HandleRegisterForm(w http.ResponseWriter, r *http.Request)
 	email := r.FormValue("email")
 	password := r.FormValue("password")
 
-	if name == "" || email == "" || password == "" {
+	// OAuth context, if any, threaded through hidden form fields so we can
+	// resume the authorize flow after registration without forcing the user
+	// to log in a second time.
+	clientID := r.FormValue("client_id")
+	redirectURI := r.FormValue("redirect_uri")
+	state := r.FormValue("state")
+	scope := r.FormValue("scope")
+	nonce := r.FormValue("nonce")
+	codeChallenge := r.FormValue("code_challenge")
+	codeChallengeMethod := r.FormValue("code_challenge_method")
+
+	renderError := func(errMsg string) {
 		httputil.HTML(w, h.tmpl, "register.html", http.StatusOK, map[string]any{
-			"error": "All fields are required",
-			"name":  name,
-			"email": email,
+			"error":               errMsg,
+			"name":                name,
+			"email":               email,
+			"clientID":            clientID,
+			"redirectURI":         redirectURI,
+			"state":               state,
+			"scope":               scope,
+			"nonce":               nonce,
+			"codeChallenge":       codeChallenge,
+			"codeChallengeMethod": codeChallengeMethod,
 		})
+	}
+
+	if name == "" || email == "" || password == "" {
+		renderError("All fields are required")
 		return
 	}
 
@@ -328,21 +379,13 @@ func (h *AuthHandler) HandleRegisterForm(w http.ResponseWriter, r *http.Request)
 
 	existingUser, _ := h.userRepo.GetByEmail(ctx, email)
 	if existingUser != nil {
-		httputil.HTML(w, h.tmpl, "register.html", http.StatusOK, map[string]any{
-			"error": "User already exists",
-			"name":  name,
-			"email": email,
-		})
+		renderError("User already exists")
 		return
 	}
 
 	hash, err := h.cryptoService.HashPassword(password)
 	if err != nil {
-		httputil.HTML(w, h.tmpl, "register.html", http.StatusOK, map[string]any{
-			"error": "Failed to process registration",
-			"name":  name,
-			"email": email,
-		})
+		renderError("Failed to process registration")
 		return
 	}
 
@@ -356,21 +399,50 @@ func (h *AuthHandler) HandleRegisterForm(w http.ResponseWriter, r *http.Request)
 		UpdatedAt:     time.Now(),
 	}
 
-	err = h.userRepo.Create(ctx, user)
+	if err := h.userRepo.Create(ctx, user); err != nil {
+		renderError("Failed to create user: " + err.Error())
+		return
+	}
+
+	// Auto-create a session so the user doesn't have to log in immediately
+	// after registering — they just supplied valid credentials, this server
+	// already trusts them. Then resume whichever flow they came from.
+	session, err := h.userUseCase.CreateSession(ctx, user.ID)
 	if err != nil {
+		// Fall back to showing the registration-success page; user can log in manually.
 		httputil.HTML(w, h.tmpl, "register.html", http.StatusOK, map[string]any{
-			"error": "Failed to create user: " + err.Error(),
-			"name":  name,
-			"email": email,
+			"success":             "Registration successful! Please login.",
+			"name":                "",
+			"email":               "",
+			"clientID":            clientID,
+			"redirectURI":         redirectURI,
+			"state":               state,
+			"scope":               scope,
+			"nonce":               nonce,
+			"codeChallenge":       codeChallenge,
+			"codeChallengeMethod": codeChallengeMethod,
+			"oauthQuery": oauthQueryFromValues(url.Values{
+				"client_id":             {clientID},
+				"redirect_uri":          {redirectURI},
+				"state":                 {state},
+				"scope":                 {scope},
+				"nonce":                 {nonce},
+				"code_challenge":        {codeChallenge},
+				"code_challenge_method": {codeChallengeMethod},
+			}),
 		})
 		return
 	}
 
-	httputil.HTML(w, h.tmpl, "register.html", http.StatusOK, map[string]any{
-		"success": "Registration successful! Please login.",
-		"name":    "",
-		"email":   "",
-	})
+	secure := r.TLS != nil
+	http.SetCookie(w, &http.Cookie{Name: "session_id", Value: session.SessionID, MaxAge: 86400, Path: "/", Secure: secure, HttpOnly: true})
+
+	if clientID == "" && redirectURI == "" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+
+	http.Redirect(w, r, "/oauth2/authorize?"+buildOAuthParams(clientID, redirectURI, state, scope, nonce, codeChallenge, codeChallengeMethod).Encode(), http.StatusFound)
 }
 
 // isValidEmail does basic email validation.
