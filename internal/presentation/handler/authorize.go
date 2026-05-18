@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/andipiee/go-oidc/internal/application/usecase"
 	"github.com/andipiee/go-oidc/internal/presentation/httputil"
@@ -58,34 +59,49 @@ func (h *AuthorizeHandler) HandleAuthorize(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Check session cookie for authenticated user
-	sessionCookie, err := r.Cookie("session_id")
-	if err != nil || sessionCookie.Value == "" {
+	// OIDC `prompt=login` (Core §3.1.2.1) forces re-authentication. If the
+	// caller requests it we ignore any existing session_id cookie *and*
+	// delete the server-side session so the user has to enter credentials
+	// again. RPs use this on their logout to prevent silent re-login.
+	prompt := q.Get("prompt")
+	forceLogin := false
+	for _, p := range strings.Fields(prompt) {
+		if p == "login" {
+			forceLogin = true
+			break
+		}
+	}
+
+	loginRedirect := func() {
+		http.SetCookie(w, &http.Cookie{Name: "session_id", Value: "", MaxAge: -1, Path: "/", HttpOnly: true})
 		loginURL := "/auth/login?" + url.Values{
 			"client_id":             {clientID},
-			"redirect_uri":         {redirectURI},
-			"state":                {state},
-			"scope":                {scope},
-			"nonce":                {nonce},
-			"code_challenge":       {codeChallenge},
+			"redirect_uri":          {redirectURI},
+			"state":                 {state},
+			"scope":                 {scope},
+			"nonce":                 {nonce},
+			"code_challenge":        {codeChallenge},
 			"code_challenge_method": {codeChallengeMethod},
 		}.Encode()
 		http.Redirect(w, r, loginURL, http.StatusFound)
+	}
+
+	sessionCookie, err := r.Cookie("session_id")
+	if err != nil || sessionCookie.Value == "" {
+		loginRedirect()
+		return
+	}
+
+	if forceLogin {
+		// Server-side delete so the old session ID can't be replayed.
+		h.userUseCase.DeleteSession(r.Context(), sessionCookie.Value)
+		loginRedirect()
 		return
 	}
 
 	session, err := h.userUseCase.ValidateSession(r.Context(), sessionCookie.Value)
 	if err != nil || session == nil {
-		loginURL := "/auth/login?" + url.Values{
-			"client_id":             {clientID},
-			"redirect_uri":         {redirectURI},
-			"state":                {state},
-			"scope":                {scope},
-			"nonce":                {nonce},
-			"code_challenge":       {codeChallenge},
-			"code_challenge_method": {codeChallengeMethod},
-		}.Encode()
-		http.Redirect(w, r, loginURL, http.StatusFound)
+		loginRedirect()
 		return
 	}
 
