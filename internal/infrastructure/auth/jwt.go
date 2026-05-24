@@ -32,6 +32,7 @@ type Claims struct {
 	Email    string `json:"email,omitempty"`
 	Name     string `json:"name,omitempty"`
 	Picture  string `json:"picture,omitempty"`
+	Role     string `json:"role,omitempty"`
 	Nonce    string `json:"nonce,omitempty"`
 }
 
@@ -118,7 +119,7 @@ func (s *JWTService) GenerateAccessToken(userID, clientID, scope, email, name, p
 	return token.SignedString(s.privateKey)
 }
 
-func (s *JWTService) GenerateIDToken(userID, clientID, nonce, email, name, picture string) (string, error) {
+func (s *JWTService) GenerateIDToken(userID, clientID, nonce, email, name, picture, role string) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -132,6 +133,7 @@ func (s *JWTService) GenerateIDToken(userID, clientID, nonce, email, name, pictu
 		Email:   email,
 		Name:    name,
 		Picture: picture,
+		Role:    role,
 		Nonce:   nonce,
 	}
 

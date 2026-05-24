@@ -42,7 +42,8 @@ func (h *UserInfoHandler) HandleUserInfo(w http.ResponseWriter, r *http.Request)
 	}
 
 	resp := map[string]any{
-		"sub": user.ID.String(),
+		"sub":  user.ID.String(),
+		"role": user.Role,
 	}
 
 	scopes := strings.Fields(claims.Scope)
