@@ -13,8 +13,12 @@ type User struct {
 	Name          string    `json:"name"`
 	EmailVerified bool      `json:"email_verified"`
 	Picture       string    `json:"picture"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	// Role is a free-form string ("user" by default, "admin" for staff).
+	// Emitted as the `role` claim on ID tokens so relying parties can gate
+	// their own admin surfaces without standing up their own role store.
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Updated struct {

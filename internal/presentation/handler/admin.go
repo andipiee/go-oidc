@@ -40,7 +40,7 @@ func (h *DiscoveryHandler) HandleDiscovery(w http.ResponseWriter, r *http.Reques
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
 		"code_challenge_methods_supported":      []string{"S256"},
-		"claims_supported":                      []string{"sub", "name", "email", "email_verified", "picture"},
+		"claims_supported":                      []string{"sub", "name", "email", "email_verified", "picture", "role"},
 		"claims_parameter_supported":            false,
 		"request_parameter_supported":           false,
 		"request_uri_parameter_supported":       false,

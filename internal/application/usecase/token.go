@@ -164,6 +164,7 @@ func (uc *TokenUseCase) ExchangeCode(ctx context.Context, req TokenRequest) (*To
 			user.Email,
 			user.Name,
 			user.Picture,
+			user.Role,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate id token: %w", err)
@@ -265,6 +266,7 @@ func (uc *TokenUseCase) RefreshToken(ctx context.Context, req TokenRequest) (*To
 			user.Email,
 			user.Name,
 			user.Picture,
+			user.Role,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate id token: %w", err)

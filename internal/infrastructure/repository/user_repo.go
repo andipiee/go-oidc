@@ -19,26 +19,29 @@ func NewUserRepository(db *database.PostgresDB) *UserRepository {
 }
 
 func (r *UserRepository) Create(ctx context.Context, user *entity.User) error {
+	if user.Role == "" {
+		user.Role = "user"
+	}
 	query := `
-		INSERT INTO users (id, email, password_hash, name, email_verified, picture, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO users (id, email, password_hash, name, email_verified, picture, role, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
 	_, err := r.db.Pool().Exec(ctx, query,
 		user.ID, user.Email, user.PasswordHash, user.Name,
-		user.EmailVerified, user.Picture, user.CreatedAt, user.UpdatedAt,
+		user.EmailVerified, user.Picture, user.Role, user.CreatedAt, user.UpdatedAt,
 	)
 	return err
 }
 
 func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*entity.User, error) {
 	query := `
-		SELECT id, email, password_hash, name, email_verified, COALESCE(picture, ''), created_at, updated_at
+		SELECT id, email, password_hash, name, email_verified, COALESCE(picture, ''), COALESCE(role, 'user'), created_at, updated_at
 		FROM users WHERE id = $1
 	`
 	var user entity.User
 	err := r.db.Pool().QueryRow(ctx, query, id).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.Name,
-		&user.EmailVerified, &user.Picture, &user.CreatedAt, &user.UpdatedAt,
+		&user.EmailVerified, &user.Picture, &user.Role, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -48,13 +51,13 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*entity.Use
 
 func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*entity.User, error) {
 	query := `
-		SELECT id, email, password_hash, name, email_verified, COALESCE(picture, ''), created_at, updated_at
+		SELECT id, email, password_hash, name, email_verified, COALESCE(picture, ''), COALESCE(role, 'user'), created_at, updated_at
 		FROM users WHERE email = $1
 	`
 	var user entity.User
 	err := r.db.Pool().QueryRow(ctx, query, email).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.Name,
-		&user.EmailVerified, &user.Picture, &user.CreatedAt, &user.UpdatedAt,
+		&user.EmailVerified, &user.Picture, &user.Role, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -63,13 +66,16 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*entity.
 }
 
 func (r *UserRepository) Update(ctx context.Context, user *entity.User) error {
+	if user.Role == "" {
+		user.Role = "user"
+	}
 	query := `
 		UPDATE users SET email = $2, password_hash = $3, name = $4, email_verified = $5,
-		picture = $6, updated_at = $7 WHERE id = $1
+		picture = $6, role = $7, updated_at = $8 WHERE id = $1
 	`
 	_, err := r.db.Pool().Exec(ctx, query,
 		user.ID, user.Email, user.PasswordHash, user.Name,
-		user.EmailVerified, user.Picture, user.UpdatedAt,
+		user.EmailVerified, user.Picture, user.Role, user.UpdatedAt,
 	)
 	return err
 }
@@ -82,7 +88,7 @@ func (r *UserRepository) Delete(ctx context.Context, id uuid.UUID) error {
 
 func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]*entity.User, error) {
 	query := `
-		SELECT id, email, password_hash, name, email_verified, COALESCE(picture, ''), created_at, updated_at
+		SELECT id, email, password_hash, name, email_verified, COALESCE(picture, ''), COALESCE(role, 'user'), created_at, updated_at
 		FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2
 	`
 	rows, err := r.db.Pool().Query(ctx, query, limit, offset)
@@ -96,7 +102,7 @@ func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]*entity
 		var user entity.User
 		if err := rows.Scan(
 			&user.ID, &user.Email, &user.PasswordHash, &user.Name,
-			&user.EmailVerified, &user.Picture, &user.CreatedAt, &user.UpdatedAt,
+			&user.EmailVerified, &user.Picture, &user.Role, &user.CreatedAt, &user.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -107,7 +113,7 @@ func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]*entity
 
 func (r *UserRepository) GetByExternalAccount(ctx context.Context, provider, providerUserID string) (*entity.User, error) {
 	query := `
-		SELECT u.id, u.email, u.password_hash, u.name, u.email_verified, COALESCE(u.picture, ''), u.created_at, u.updated_at
+		SELECT u.id, u.email, u.password_hash, u.name, u.email_verified, COALESCE(u.picture, ''), COALESCE(u.role, 'user'), u.created_at, u.updated_at
 		FROM users u
 		JOIN external_accounts ea ON u.id = ea.user_id
 		WHERE ea.provider = $1 AND ea.provider_user_id = $2
@@ -115,7 +121,7 @@ func (r *UserRepository) GetByExternalAccount(ctx context.Context, provider, pro
 	var user entity.User
 	err := r.db.Pool().QueryRow(ctx, query, provider, providerUserID).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.Name,
-		&user.EmailVerified, &user.Picture, &user.CreatedAt, &user.UpdatedAt,
+		&user.EmailVerified, &user.Picture, &user.Role, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
 		return nil, nil
@@ -149,7 +155,7 @@ func (r *ClientRepository) Create(ctx context.Context, client *entity.Client) er
 	scopes, _ := json.Marshal(client.Scopes)
 
 	query := `
-		INSERT INTO clients (id, client_id, client_secret_hash, name, redirect_uris, grant_types, 
+		INSERT INTO clients (id, client_id, client_secret_hash, name, redirect_uris, grant_types,
 		response_types, token_endpoint_auth_method, scopes, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
@@ -163,7 +169,7 @@ func (r *ClientRepository) Create(ctx context.Context, client *entity.Client) er
 
 func (r *ClientRepository) GetByID(ctx context.Context, id uuid.UUID) (*entity.Client, error) {
 	query := `
-		SELECT id, client_id, client_secret_hash, name, redirect_uris, grant_types, 
+		SELECT id, client_id, client_secret_hash, name, redirect_uris, grant_types,
 		response_types, token_endpoint_auth_method, scopes, created_at, updated_at
 		FROM clients WHERE id = $1
 	`
@@ -186,7 +192,7 @@ func (r *ClientRepository) GetByID(ctx context.Context, id uuid.UUID) (*entity.C
 
 func (r *ClientRepository) GetByClientID(ctx context.Context, clientID string) (*entity.Client, error) {
 	query := `
-		SELECT id, client_id, client_secret_hash, name, redirect_uris, grant_types, 
+		SELECT id, client_id, client_secret_hash, name, redirect_uris, grant_types,
 		response_types, token_endpoint_auth_method, scopes, created_at, updated_at
 		FROM clients WHERE client_id = $1
 	`
@@ -234,7 +240,7 @@ func (r *ClientRepository) Delete(ctx context.Context, id uuid.UUID) error {
 
 func (r *ClientRepository) List(ctx context.Context, limit, offset int) ([]*entity.Client, error) {
 	query := `
-		SELECT id, client_id, client_secret_hash, name, redirect_uris, grant_types, 
+		SELECT id, client_id, client_secret_hash, name, redirect_uris, grant_types,
 		response_types, token_endpoint_auth_method, scopes, created_at, updated_at
 		FROM clients ORDER BY created_at DESC LIMIT $1 OFFSET $2
 	`
