@@ -83,12 +83,40 @@ func CORS(next http.Handler) http.Handler {
 	})
 }
 
-func BasicAuth(username, password string) func(http.Handler) http.Handler {
+// RequireAdmin validates the admin_session cookie (an RS256 id_token) and gates
+// access on the `role` claim being "admin". `validate` returns the role for a
+// token string, or an error if the token is missing/invalid/expired.
+//
+// When redirectOnFail is true (HTML pages) an unauthenticated request is sent
+// to /admin/login to (re-)run the OIDC flow. When false (JSON APIs called via
+// fetch) it returns 401 so the SPA can react without following a redirect.
+func RequireAdmin(validate func(token string) (role string, err error), redirectOnFail bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			u, p, ok := r.BasicAuth()
-			if !ok || u != username || p != password {
+			deny := func() {
+				if redirectOnFail {
+					http.Redirect(w, r, "/admin/login", http.StatusFound)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
+				fmt.Fprint(w, `{"error":"unauthorized"}`)
+			}
+
+			c, err := r.Cookie("admin_session")
+			if err != nil || c.Value == "" {
+				deny()
+				return
+			}
+			role, err := validate(c.Value)
+			if err != nil || role != "admin" {
+				if redirectOnFail {
+					deny()
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprint(w, `{"error":"forbidden"}`)
 				return
 			}
 			next.ServeHTTP(w, r)

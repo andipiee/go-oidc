@@ -4,8 +4,8 @@ import (
 	"context"
 	"html/template"
 	"net/http"
+	"net/mail"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/andipiee/go-oidc/internal/application/usecase"
@@ -71,6 +71,11 @@ func (h *AuthHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 
 	if req.Email == "" || req.Name == "" || req.Password == "" {
 		httputil.Error(w, http.StatusBadRequest, "email, name, and password are required", "")
+		return
+	}
+
+	if !isValidEmail(req.Email) {
+		httputil.Error(w, http.StatusBadRequest, "invalid email format", "")
 		return
 	}
 
@@ -375,6 +380,11 @@ func (h *AuthHandler) HandleRegisterForm(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if !isValidEmail(email) {
+		renderError("Please enter a valid email address")
+		return
+	}
+
 	ctx := context.Background()
 
 	existingUser, _ := h.userRepo.GetByEmail(ctx, email)
@@ -445,7 +455,10 @@ func (h *AuthHandler) HandleRegisterForm(w http.ResponseWriter, r *http.Request)
 	http.Redirect(w, r, "/oauth2/authorize?"+buildOAuthParams(clientID, redirectURI, state, scope, nonce, codeChallenge, codeChallengeMethod).Encode(), http.StatusFound)
 }
 
-// isValidEmail does basic email validation.
+// isValidEmail reports whether email parses as a single RFC 5322 address.
+// ParseAddress also accepts display-name forms ("Andi <a@b.com>"), so we reject
+// anything where the parsed address doesn't equal the raw input.
 func isValidEmail(email string) bool {
-	return strings.Contains(email, "@") && strings.Contains(email, ".")
+	addr, err := mail.ParseAddress(email)
+	return err == nil && addr.Address == email
 }
