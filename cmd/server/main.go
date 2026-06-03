@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/andipiee/go-oidc/internal/application/usecase"
+	"github.com/andipiee/go-oidc/internal/domain/entity"
 	"github.com/andipiee/go-oidc/internal/infrastructure/auth"
 	"github.com/andipiee/go-oidc/internal/infrastructure/database"
 	"github.com/andipiee/go-oidc/internal/infrastructure/oauth"
@@ -20,7 +21,12 @@ import (
 	"github.com/andipiee/go-oidc/internal/presentation/handler"
 	"github.com/andipiee/go-oidc/internal/presentation/httputil"
 	"github.com/andipiee/go-oidc/internal/presentation/middleware"
+	"github.com/google/uuid"
 )
+
+// adminConsoleClientID is the fixed client_id for the OIDC-authenticated admin
+// console. Bootstrapped at startup by ensureAdminConsoleClient.
+const adminConsoleClientID = "admin-console"
 
 func main() {
 	telemetry.InitLogger()
@@ -88,10 +94,31 @@ func main() {
 	tokenHandler := handler.NewTokenHandler(tokenUseCase)
 	userinfoHandler := handler.NewUserInfoHandler(userUseCase, jwtService)
 	deviceHandler := handler.NewDeviceHandler(deviceUseCase, tmpl)
-	adminHandler := handler.NewAdminHandler(userRepo, clientRepo, handler.AdminConfig(cfg.Admin))
+	adminHandler := handler.NewAdminHandler(userRepo)
 	discoveryHandler := handler.NewDiscoveryHandler(cfg.JWT.Issuer, cfg.Server.Port, jwtService)
 	authHandler := handler.NewAuthHandler(userRepo, cryptoService, jwtService, userUseCase, tmpl)
 	registrationHandler := handler.NewClientRegistrationHandler(clientRepo, cryptoService)
+
+	// The admin console authenticates via the normal OIDC flow as a public
+	// (PKCE) client. Bootstrap that client idempotently so its redirect_uri
+	// always tracks the configured issuer across environments.
+	adminRedirectURI := cfg.JWT.Issuer + "/admin/callback"
+	if cfg.Admin.Enabled {
+		if err := ensureAdminConsoleClient(ctx, clientRepo, adminConsoleClientID, adminRedirectURI); err != nil {
+			slog.Error("failed to bootstrap admin console client", "error", err)
+			os.Exit(1)
+		}
+	}
+	adminConsoleHandler := handler.NewAdminConsoleHandler(jwtService, tokenUseCase, cryptoService, clientRepo, adminConsoleClientID, adminRedirectURI, tmpl)
+
+	// RequireAdmin validates the admin_session id_token and gates on role=admin.
+	validateAdminToken := func(token string) (string, error) {
+		claims, err := jwtService.ValidateToken(token)
+		if err != nil {
+			return "", err
+		}
+		return claims.Role, nil
+	}
 
 	mux := http.NewServeMux()
 
@@ -117,16 +144,26 @@ func main() {
 	mux.HandleFunc("GET /oidc/device", deviceHandler.HandleDevice)
 	mux.HandleFunc("POST /oidc/register", registrationHandler.HandleRegistration)
 
-	// Admin (with BasicAuth)
+	// Admin console — gated by OIDC (role=admin claim), not Basic Auth.
 	if cfg.Admin.Enabled {
-		adminAuth := middleware.BasicAuth(cfg.Admin.Username, cfg.Admin.Password)
-		mux.Handle("GET /admin/", adminAuth(http.HandlerFunc(adminHandler.HandleIndex)))
-		mux.Handle("GET /admin/users", adminAuth(http.HandlerFunc(adminHandler.HandleListUsers)))
-		mux.Handle("POST /admin/users", adminAuth(http.HandlerFunc(adminHandler.HandleCreateUser)))
-		mux.Handle("DELETE /admin/users/{id}", adminAuth(http.HandlerFunc(adminHandler.HandleDeleteUser)))
-		mux.Handle("GET /admin/clients", adminAuth(http.HandlerFunc(adminHandler.HandleListClients)))
-		mux.Handle("POST /admin/clients", adminAuth(http.HandlerFunc(adminHandler.HandleCreateClient)))
-		mux.Handle("DELETE /admin/clients/{id}", adminAuth(http.HandlerFunc(adminHandler.HandleDeleteClient)))
+		requireAdminPage := middleware.RequireAdmin(validateAdminToken, true) // redirect to /admin/login
+		requireAdminAPI := middleware.RequireAdmin(validateAdminToken, false) // 401/403 JSON
+
+		// OIDC relying-party endpoints (public — they ARE the login path).
+		mux.HandleFunc("GET /admin/login", adminConsoleHandler.HandleLogin)
+		mux.HandleFunc("GET /admin/callback", adminConsoleHandler.HandleCallback)
+		mux.HandleFunc("POST /admin/logout", adminConsoleHandler.HandleLogout)
+
+		// Dashboard page + client management — server-rendered, form POSTs.
+		mux.Handle("GET /admin", requireAdminPage(http.HandlerFunc(adminConsoleHandler.ShowDashboard)))
+		mux.Handle("POST /admin/clients", requireAdminPage(http.HandlerFunc(adminConsoleHandler.HandleCreateClient)))
+		mux.Handle("POST /admin/clients/{id}/rotate-secret", requireAdminPage(http.HandlerFunc(adminConsoleHandler.HandleRotateSecret)))
+		mux.Handle("POST /admin/clients/{id}/delete", requireAdminPage(http.HandlerFunc(adminConsoleHandler.HandleDeleteClient)))
+
+		// User management — JSON API (no dashboard UI yet), gated the same way.
+		mux.Handle("GET /admin/users", requireAdminAPI(http.HandlerFunc(adminHandler.HandleListUsers)))
+		mux.Handle("POST /admin/users", requireAdminAPI(http.HandlerFunc(adminHandler.HandleCreateUser)))
+		mux.Handle("DELETE /admin/users/{id}", requireAdminAPI(http.HandlerFunc(adminHandler.HandleDeleteUser)))
 	}
 
 	// Auth
@@ -180,4 +217,34 @@ func main() {
 		slog.Error("failed to shutdown OpenTelemetry", "error", err)
 	}
 	slog.Info("server exited")
+}
+
+// ensureAdminConsoleClient upserts the public PKCE client the admin console
+// uses to authenticate. Idempotent: created on first boot; on later boots its
+// redirect_uri is realigned with the configured issuer (so prod/staging each
+// get the right callback without an env-specific migration).
+func ensureAdminConsoleClient(ctx context.Context, clientRepo *repository.ClientRepository, clientID, redirectURI string) error {
+	existing, err := clientRepo.GetByClientID(ctx, clientID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		existing.RedirectURIs = []string{redirectURI}
+		existing.TokenEndpointAuthMethod = "none"
+		existing.UpdatedAt = time.Now()
+		return clientRepo.Update(ctx, existing)
+	}
+	return clientRepo.Create(ctx, &entity.Client{
+		ID:                      uuid.Must(uuid.NewV7()),
+		ClientID:                clientID,
+		ClientSecretHash:        "", // public client — PKCE only, no secret
+		Name:                    "Admin Console",
+		RedirectURIs:            []string{redirectURI},
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		ResponseTypes:           []string{"code"},
+		TokenEndpointAuthMethod: "none",
+		Scopes:                  []string{"openid", "profile", "email"},
+		CreatedAt:               time.Now(),
+		UpdatedAt:               time.Now(),
+	})
 }

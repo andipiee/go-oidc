@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Console — OAuth2 Clients</title>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #181b22; --panel-2: #1f232c; --border: #262b36;
+      --text: #e6e6e6; --muted: #9aa4b2; --accent: #6ea8fe; --danger: #f1707b;
+      --ok: #5cc98b; --warn: #f5c451;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg); color: var(--text); }
+    header { display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 28px; border-bottom: 1px solid var(--border); }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    header .sub { color: var(--muted); font-size: 13px; margin-left: 10px; }
+    main { max-width: 1080px; margin: 0 auto; padding: 28px; }
+    .row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .card h2 { font-size: 14px; margin: 0 0 14px; font-weight: 600; }
+    .grow { flex: 1; min-width: 280px; }
+    button { font: inherit; border: 1px solid var(--border); background: var(--panel-2);
+      color: var(--text); padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent); color: #08111f; border-color: var(--accent); font-weight: 600; }
+    button.small { padding: 5px 10px; font-size: 12px; }
+    button.danger { color: var(--danger); }
+    input, select, textarea { font: inherit; background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; width: 100%; }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 5px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { text-align: left; padding: 11px 10px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; font-size: 12px; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel-2);
+      padding: 2px 6px; border-radius: 5px; font-size: 12px; word-break: break-all; }
+    .tag { display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 999px; padding: 1px 9px; font-size: 11px; color: var(--muted); margin: 1px 2px; }
+    .muted { color: var(--muted); }
+    .actions { display: flex; gap: 6px; }
+    .empty { color: var(--muted); padding: 24px 10px; text-align: center; }
+    .reveal { background: rgba(92,201,139,.1); border: 1px solid var(--ok); border-radius: 12px;
+      padding: 18px 20px; margin-bottom: 20px; }
+    .reveal h3 { margin: 0 0 4px; font-size: 14px; color: var(--ok); }
+    .reveal .field { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+    .reveal .field code { flex: 1; padding: 9px 12px; }
+    .reveal .warn { color: var(--warn); font-size: 12px; margin-top: 12px; }
+    .error { background: rgba(241,112,123,.1); border: 1px solid var(--danger); color: var(--danger);
+      border-radius: 10px; padding: 12px 14px; margin-bottom: 20px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>Admin Console</h1><span class="sub">OAuth2 client management</span></div>
+    <form method="POST" action="/admin/logout"><button type="submit">Log out</button></form>
+  </header>
+
+  <main>
+    {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+
+    {{if .NewSecret}}
+    <div class="reveal">
+      <h3>✓ Secret generated</h3>
+      <p class="muted" style="margin:0;font-size:13px;">Copy this now — it is shown only once and cannot be retrieved later.</p>
+      <div class="field"><span class="muted" style="width:90px;font-size:12px;">client_id</span><code id="rid">{{.NewClientID}}</code><button class="small" type="button" data-copy="rid">Copy</button></div>
+      <div class="field"><span class="muted" style="width:90px;font-size:12px;">client_secret</span><code id="rsecret">{{.NewSecret}}</code><button class="small" type="button" data-copy="rsecret">Copy</button></div>
+      <div class="warn">⚠ This secret will never be displayed again. Store it in your client's config now.</div>
+    </div>
+    {{end}}
+
+    <div class="row">
+      <section class="card grow">
+        <h2>Clients</h2>
+        {{if .Clients}}
+        <table>
+          <thead><tr><th>Name</th><th>client_id</th><th>Auth method</th><th>Grants</th><th></th></tr></thead>
+          <tbody>
+            {{range .Clients}}
+            <tr>
+              <td>{{.Name}}</td>
+              <td><code>{{.ClientID}}</code></td>
+              <td class="muted">{{if .TokenEndpointAuthMethod}}{{.TokenEndpointAuthMethod}}{{else}}—{{end}}</td>
+              <td>{{range .GrantTypes}}<span class="tag">{{.}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+              <td><div class="actions">
+                <form method="POST" action="/admin/clients/{{.ID}}/rotate-secret" onsubmit="return confirm('Regenerate the secret? The current secret will stop working immediately.');">
+                  <button class="small" type="submit">Regenerate secret</button>
+                </form>
+                <form method="POST" action="/admin/clients/{{.ID}}/delete" onsubmit="return confirm('Delete client &quot;{{.Name}}&quot;? This cannot be undone.');">
+                  <button class="small danger" type="submit">Delete</button>
+                </form>
+              </div></td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{else}}
+        <div class="empty">No clients yet. Create one on the right.</div>
+        {{end}}
+      </section>
+
+      <section class="card" style="width: 320px;">
+        <h2>Create client</h2>
+        <form method="POST" action="/admin/clients">
+          <label>Name</label>
+          <input name="name" placeholder="My App" required>
+          <label>Redirect URIs (one per line)</label>
+          <textarea name="redirect_uris" rows="3" placeholder="https://app.example.com/callback"></textarea>
+          <label>Token endpoint auth method</label>
+          <select name="token_endpoint_auth_method">
+            <option value="client_secret_basic">client_secret_basic</option>
+            <option value="client_secret_post">client_secret_post</option>
+            <option value="none">none (public / PKCE)</option>
+          </select>
+          <label>Grant types</label>
+          <select name="grant_types">
+            <option value="authorization_code,refresh_token">authorization_code + refresh_token</option>
+            <option value="authorization_code">authorization_code</option>
+          </select>
+          <div style="margin-top:16px;"><button class="primary" type="submit" style="width:100%;">Create</button></div>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    // Clipboard helper only — all data is server-rendered.
+    document.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-copy]');
+      if (!btn) return;
+      const el = document.getElementById(btn.dataset.copy);
+      navigator.clipboard.writeText(el.textContent);
+      btn.textContent = 'Copied';
+      setTimeout(() => btn.textContent = 'Copy', 1200);
+    });
+  </script>
+</body>
+</html>

@@ -51,28 +51,14 @@ func (h *DiscoveryHandler) HandleJWKS(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, h.jwtService.GetJWKS())
 }
 
+// AdminHandler serves the JSON user-management API. Client management lives in
+// AdminConsoleHandler (server-rendered).
 type AdminHandler struct {
-	userRepo   repository.UserRepository
-	clientRepo repository.ClientRepository
-	config     AdminConfig
+	userRepo repository.UserRepository
 }
 
-type AdminConfig struct {
-	Enabled  bool
-	Username string
-	Password string
-}
-
-func NewAdminHandler(userRepo repository.UserRepository, clientRepo repository.ClientRepository, config AdminConfig) *AdminHandler {
-	return &AdminHandler{
-		userRepo:   userRepo,
-		clientRepo: clientRepo,
-		config:     config,
-	}
-}
-
-func (h *AdminHandler) HandleIndex(w http.ResponseWriter, r *http.Request) {
-	httputil.JSON(w, http.StatusOK, map[string]any{"message": "Admin API", "endpoints": []string{"/admin/users", "/admin/clients"}})
+func NewAdminHandler(userRepo repository.UserRepository) *AdminHandler {
+	return &AdminHandler{userRepo: userRepo}
 }
 
 func (h *AdminHandler) HandleListUsers(w http.ResponseWriter, r *http.Request) {
@@ -124,74 +110,6 @@ func (h *AdminHandler) HandleDeleteUser(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.userRepo.Delete(r.Context(), id); err != nil {
-		httputil.Error(w, http.StatusInternalServerError, err.Error(), "")
-		return
-	}
-
-	httputil.JSON(w, http.StatusOK, map[string]any{})
-}
-
-func (h *AdminHandler) HandleListClients(w http.ResponseWriter, r *http.Request) {
-	clients, err := h.clientRepo.List(r.Context(), 100, 0)
-	if err != nil {
-		httputil.Error(w, http.StatusInternalServerError, err.Error(), "")
-		return
-	}
-	httputil.JSON(w, http.StatusOK, clients)
-}
-
-func (h *AdminHandler) HandleCreateClient(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name                    string   `json:"name"`
-		RedirectURIs            []string `json:"redirect_uris"`
-		GrantTypes              []string `json:"grant_types"`
-		TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
-	}
-	if err := httputil.DecodeJSON(r, &req); err != nil {
-		httputil.Error(w, http.StatusBadRequest, err.Error(), "")
-		return
-	}
-
-	crypto := auth.NewCryptoService()
-	clientSecret := crypto.GenerateRandomString(32)
-	clientSecretHash, _ := crypto.HashPassword(clientSecret)
-
-	client := &entity.Client{
-		ID:                      uuid.Must(uuid.NewV7()),
-		ClientID:                crypto.GenerateRandomString(16),
-		ClientSecretHash:        clientSecretHash,
-		Name:                    req.Name,
-		RedirectURIs:            req.RedirectURIs,
-		GrantTypes:              req.GrantTypes,
-		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
-		CreatedAt:               time.Now(),
-		UpdatedAt:               time.Now(),
-	}
-
-	if err := h.clientRepo.Create(r.Context(), client); err != nil {
-		httputil.Error(w, http.StatusInternalServerError, err.Error(), "")
-		return
-	}
-
-	httputil.JSON(w, http.StatusCreated, map[string]any{
-		"id":                         client.ID,
-		"client_id":                  client.ClientID,
-		"client_secret":              clientSecret,
-		"name":                       client.Name,
-		"redirect_uris":              client.RedirectURIs,
-		"grant_types":                client.GrantTypes,
-		"token_endpoint_auth_method": client.TokenEndpointAuthMethod,
-	})
-}
-
-func (h *AdminHandler) HandleDeleteClient(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("id"))
-	if err != nil {
-		httputil.Error(w, http.StatusBadRequest, "invalid id", "")
-		return
-	}
-
-	if err := h.clientRepo.Delete(r.Context(), id); err != nil {
 		httputil.Error(w, http.StatusInternalServerError, err.Error(), "")
 		return
 	}
