@@ -18,10 +18,8 @@
     header h1 { font-size: 16px; margin: 0; font-weight: 600; }
     header .sub { color: var(--muted); font-size: 13px; margin-left: 10px; }
     main { max-width: 1080px; margin: 0 auto; padding: 28px; }
-    .row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
     .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
     .card h2 { font-size: 14px; margin: 0 0 14px; font-weight: 600; }
-    .grow { flex: 1; min-width: 280px; }
     button { font: inherit; border: 1px solid var(--border); background: var(--panel-2);
       color: var(--text); padding: 8px 14px; border-radius: 8px; cursor: pointer; }
     button:hover { border-color: var(--accent); }
@@ -39,8 +37,19 @@
     .tag { display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
       border-radius: 999px; padding: 1px 9px; font-size: 11px; color: var(--muted); margin: 1px 2px; }
     .muted { color: var(--muted); }
-    .actions { display: flex; gap: 6px; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .uri { font-size: 12px; color: var(--text); word-break: break-all; line-height: 1.5; }
     .empty { color: var(--muted); padding: 24px 10px; text-align: center; }
+    /* modal */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+      align-items: center; justify-content: center; padding: 20px; z-index: 50; }
+    .overlay.show { display: flex; }
+    .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 24px; max-width: 520px; width: 100%; }
+    .modal h3 { margin: 0 0 6px; font-size: 15px; }
+    .modal textarea { margin-top: 6px; resize: vertical; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    button.ghost { background: transparent; }
     .reveal { background: rgba(92,201,139,.1); border: 1px solid var(--ok); border-radius: 12px;
       padding: 18px 20px; margin-bottom: 20px; }
     .reveal h3 { margin: 0 0 4px; font-size: 14px; color: var(--ok); }
@@ -70,12 +79,11 @@
     </div>
     {{end}}
 
-    <div class="row">
-      <section class="card grow">
-        <h2>Clients</h2>
-        {{if .Clients}}
-        <table>
-          <thead><tr><th>Name</th><th>client_id</th><th>Auth method</th><th>Grants</th><th></th></tr></thead>
+    <section class="card">
+      <h2>Clients</h2>
+      {{if .Clients}}
+      <table>
+          <thead><tr><th>Name</th><th>client_id</th><th>Auth method</th><th>Grants</th><th>Redirect URIs</th><th></th></tr></thead>
           <tbody>
             {{range .Clients}}
             <tr>
@@ -83,7 +91,9 @@
               <td><code>{{.ClientID}}</code></td>
               <td class="muted">{{if .TokenEndpointAuthMethod}}{{.TokenEndpointAuthMethod}}{{else}}—{{end}}</td>
               <td>{{range .GrantTypes}}<span class="tag">{{.}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+              <td>{{range .RedirectURIs}}<div class="uri">{{.}}</div>{{else}}<span class="muted">—</span>{{end}}</td>
               <td><div class="actions">
+                <button class="small" type="button" data-edit-uris data-id="{{.ID}}" data-name="{{.Name}}">Edit URIs</button>
                 <form method="POST" action="/admin/clients/{{.ID}}/rotate-secret" onsubmit="return confirm('Regenerate the secret? The current secret will stop working immediately.');">
                   <button class="small" type="submit">Regenerate secret</button>
                 </form>
@@ -95,44 +105,83 @@
             {{end}}
           </tbody>
         </table>
-        {{else}}
-        <div class="empty">No clients yet. Create one on the right.</div>
-        {{end}}
-      </section>
+      {{else}}
+      <div class="empty">No clients yet. Create one using the form below.</div>
+      {{end}}
+    </section>
 
-      <section class="card" style="width: 320px;">
-        <h2>Create client</h2>
-        <form method="POST" action="/admin/clients">
-          <label>Name</label>
-          <input name="name" placeholder="My App" required>
-          <label>Redirect URIs (one per line)</label>
-          <textarea name="redirect_uris" rows="3" placeholder="https://app.example.com/callback"></textarea>
-          <label>Token endpoint auth method</label>
-          <select name="token_endpoint_auth_method">
-            <option value="client_secret_basic">client_secret_basic</option>
-            <option value="client_secret_post">client_secret_post</option>
-            <option value="none">none (public / PKCE)</option>
-          </select>
-          <label>Grant types</label>
-          <select name="grant_types">
-            <option value="authorization_code,refresh_token">authorization_code + refresh_token</option>
-            <option value="authorization_code">authorization_code</option>
-          </select>
-          <div style="margin-top:16px;"><button class="primary" type="submit" style="width:100%;">Create</button></div>
-        </form>
-      </section>
-    </div>
+    <section class="card" style="margin-top:16px;">
+      <h2>Create new client</h2>
+      <form method="POST" action="/admin/clients" style="max-width:480px;">
+        <label>Name</label>
+        <input name="name" placeholder="My App" required>
+        <label>Redirect URIs (one per line)</label>
+        <textarea name="redirect_uris" rows="3" placeholder="https://app.example.com/callback"></textarea>
+        <label>Token endpoint auth method</label>
+        <select name="token_endpoint_auth_method">
+          <option value="client_secret_basic">client_secret_basic</option>
+          <option value="client_secret_post">client_secret_post</option>
+          <option value="none">none (public / PKCE)</option>
+        </select>
+        <label>Grant types</label>
+        <select name="grant_types">
+          <option value="authorization_code,refresh_token">authorization_code + refresh_token</option>
+          <option value="authorization_code">authorization_code</option>
+        </select>
+        <div style="margin-top:16px;"><button class="primary" type="submit">Create client</button></div>
+      </form>
+    </section>
   </main>
 
+  <!-- Edit redirect URIs modal -->
+  <div class="overlay" id="uri-modal">
+    <div class="modal">
+      <h3>Update redirect URIs — <span id="uri-client"></span></h3>
+      <p class="muted" style="margin:0;font-size:13px;">One URI per line. Saving replaces the existing list.</p>
+      <form method="POST" id="uri-form" action="">
+        <textarea name="redirect_uris" id="uri-textarea" rows="6" style="width:100%;" placeholder="https://app.example.com/callback"></textarea>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="uri-cancel">Cancel</button>
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
-    // Clipboard helper only — all data is server-rendered.
+    // Current redirect URIs per client id, used to prefill the edit modal.
+    const clientURIs = {
+      {{range .Clients}}"{{.ID}}": [{{range .RedirectURIs}}"{{.}}",{{end}}],
+      {{end}}
+    };
+
+    const uriModal = document.getElementById('uri-modal');
+    function openURIModal(id, name) {
+      document.getElementById('uri-form').action = '/admin/clients/' + id + '/redirect-uris';
+      document.getElementById('uri-client').textContent = name;
+      document.getElementById('uri-textarea').value = (clientURIs[id] || []).join('\n');
+      uriModal.classList.add('show');
+    }
+    function closeURIModal() { uriModal.classList.remove('show'); }
+
     document.addEventListener('click', (ev) => {
-      const btn = ev.target.closest('[data-copy]');
-      if (!btn) return;
-      const el = document.getElementById(btn.dataset.copy);
-      navigator.clipboard.writeText(el.textContent);
-      btn.textContent = 'Copied';
-      setTimeout(() => btn.textContent = 'Copy', 1200);
+      const copy = ev.target.closest('[data-copy]');
+      if (copy) {
+        const el = document.getElementById(copy.dataset.copy);
+        navigator.clipboard.writeText(el.textContent);
+        copy.textContent = 'Copied';
+        setTimeout(() => copy.textContent = 'Copy', 1200);
+        return;
+      }
+      const edit = ev.target.closest('[data-edit-uris]');
+      if (edit) { openURIModal(edit.dataset.id, edit.dataset.name); return; }
+      if (ev.target.id === 'uri-cancel') { closeURIModal(); return; }
+      // Click on the dark backdrop (outside the dialog) closes it.
+      if (ev.target === uriModal) closeURIModal();
+    });
+
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') closeURIModal();
     });
   </script>
 </body>
