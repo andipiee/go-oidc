@@ -142,6 +142,31 @@ func (h *AdminConsoleHandler) HandleRotateSecret(w http.ResponseWriter, r *http.
 	h.renderDashboard(w, r, dashboardData{NewClientID: client.ClientID, NewSecret: secret})
 }
 
+// HandleUpdateRedirectURIs replaces a client's redirect URIs (POST
+// /admin/clients/{id}/redirect-uris) with the newline-separated list from the
+// form, then redirects back to the dashboard (Post/Redirect/Get).
+func (h *AdminConsoleHandler) HandleUpdateRedirectURIs(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		h.renderDashboard(w, r, dashboardData{Error: "Invalid client id."})
+		return
+	}
+	client, err := h.clientRepo.GetByID(r.Context(), id)
+	if err != nil || client == nil {
+		h.renderDashboard(w, r, dashboardData{Error: "Client not found."})
+		return
+	}
+
+	r.ParseForm()
+	client.RedirectURIs = splitLines(r.FormValue("redirect_uris"))
+	client.UpdatedAt = time.Now()
+	if err := h.clientRepo.Update(r.Context(), client); err != nil {
+		h.renderDashboard(w, r, dashboardData{Error: "Failed to update redirect URIs: " + err.Error()})
+		return
+	}
+	http.Redirect(w, r, "/admin", http.StatusFound)
+}
+
 // HandleDeleteClient deletes a client (POST /admin/clients/{id}/delete) then
 // redirects back to the dashboard (Post/Redirect/Get).
 func (h *AdminConsoleHandler) HandleDeleteClient(w http.ResponseWriter, r *http.Request) {

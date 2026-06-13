@@ -158,6 +158,7 @@ func main() {
 		mux.Handle("GET /admin", requireAdminPage(http.HandlerFunc(adminConsoleHandler.ShowDashboard)))
 		mux.Handle("POST /admin/clients", requireAdminPage(http.HandlerFunc(adminConsoleHandler.HandleCreateClient)))
 		mux.Handle("POST /admin/clients/{id}/rotate-secret", requireAdminPage(http.HandlerFunc(adminConsoleHandler.HandleRotateSecret)))
+		mux.Handle("POST /admin/clients/{id}/redirect-uris", requireAdminPage(http.HandlerFunc(adminConsoleHandler.HandleUpdateRedirectURIs)))
 		mux.Handle("POST /admin/clients/{id}/delete", requireAdminPage(http.HandlerFunc(adminConsoleHandler.HandleDeleteClient)))
 
 		// User management — JSON API (no dashboard UI yet), gated the same way.
